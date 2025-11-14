@@ -75,7 +75,7 @@ exports.signin = (req, res) => {
         {
           algorithm: 'HS256',
           allowInsecureKeySizes: true,
-          expiresIn: 604800, 
+          expiresIn: 180, 
         });
 
       const sessionId = uuidv4();
@@ -151,7 +151,7 @@ exports.refreshToken = (req, res) => {
         {
           algorithm: 'HS256',
           allowInsecureKeySizes: true,
-          expiresIn: 604800, 
+          expiresIn: 180, 
         });
 
       user.update({
