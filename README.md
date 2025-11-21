@@ -64,6 +64,10 @@ curl http://localhost:8080/api/test/all
 curl -b user_cookies.txt -X POST http://localhost:8080/api/auth/logout
 
 curl -c user_cookies.txt -X POST -H "Content-Type: application/json" -d '{
-"username": "hybridadmin",
+"username": "admin1",
 "password": "123456"
 }' http://localhost:8080/api/auth/signin
+
+curl -X POST http://localhost:8080/api/auth/logout \
+ -H "x-access-token: ACCESS-TOKEN" \
+ -H "Content-Type: application/json"

@@ -1,128 +1,217 @@
 const request = require('supertest');
 const app = require('../../server');
+const db = require('../../app/models');
+const jwt = require('jsonwebtoken');
 
-jest.mock('../../app/middleware/authJwt', () => ({
-  verifySession: jest.fn((req, res, next) => {
-    const sessionId = req.cookies ? req.cookies.sessionId : null;
-    
-    if (sessionId === 'valid-session') {
-      req.userId = 1;
-      next();
-    } else {
-      res.status(401).send({ message: "No active session!" });
-    }
-  }),
-  
-  verifyToken: jest.fn((req, res, next) => {
-    const token = req.headers['x-access-token'];
-    
-    if (token === 'valid-token') {
-      req.userId = 1;
-      next();
-    } else {
-      res.status(403).send({ message: "No token provided!" });
-    }
-  }),
-  
-  verifyHybridToken: jest.fn((req, res, next) => {
-    const token = req.headers['x-access-token'];
-    const sessionId = req.cookies ? req.cookies.sessionId : null;
-    
-    if (token === 'valid-token' || sessionId === 'valid-session') {
-      req.userId = 1;
-      next();
-    } else {
-      res.status(403).send({ message: "No authentication provided!" });
-    }
-  }),
-  
-  isAdmin: jest.fn((req, res, next) => {
-    next();
-  })
-}));
+jest.mock('../../app/models');
+jest.mock('jsonwebtoken');
 
-jest.mock('../../app/controllers/user.controller', () => ({
-  allAccess: jest.fn((req, res) => {
-    res.status(200).send('Test info lab4.');
-  }),
-  userBoard: jest.fn((req, res) => {
-    res.status(200).send('Test User lab4.');
-  }),
-  adminBoard: jest.fn((req, res) => {
-    res.status(200).send('Test Admin lab4.');
-  })
-}));
+console.log = jest.fn();
 
 describe('User Routes Integration Tests', () => {
+  let server;
+
+  beforeAll(async () => {
+    server = app;
+  });
+
+  afterAll(async () => {
+    if (server && server.close) {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
   describe('GET /api/test/all', () => {
-    test('should return public content', async () => {
-      const response = await request(app)
+    it('should return public content', (done) => {
+      request(server)
         .get('/api/test/all')
-        .expect(200);
-
-      expect(response.text).toBe('Test info lab4.');
+        .expect(200)
+        .end((err, response) => {
+          if (err) return done(err);
+          
+          expect(response.text).toBe('Test info lab4.');
+          done();
+        });
     });
   });
 
-  describe('GET /api/test/user', () => {
-    test('should access user content with valid session', async () => {
-      const response = await request(app)
-        .get('/api/test/user')
-        .set('Cookie', ['sessionId=valid-session'])
-        .expect(200);
+  describe('GET /api/test/user-session', () => {
+    it('should return user content for valid session', (done) => {
+      const mockUser = {
+        id: 1,
+        username: 'testuser',
+        email: 'test@example.com',
+        getRoles: jest.fn().mockReturnValue({
+          then: jest.fn().mockImplementation((callback) => {
+            callback([{ name: 'user' }]);
+            return { catch: jest.fn() };
+          })
+        })
+      };
 
-      expect(response.text).toBe('Test User lab4.');
+      db.user.findOne.mockReturnValue({
+        then: jest.fn().mockImplementation((callback) => {
+          callback(mockUser);
+          return { catch: jest.fn() };
+        })
+      });
+
+      request(server)
+        .get('/api/test/user-session')
+        .set('Cookie', ['sessionId=valid-session-id'])
+        .expect(200)
+        .end((err, response) => {
+          if (err) return done(err);
+          
+          expect(response.text).toBe('Test User lab4.');
+          done();
+        });
     });
 
-    test('should deny access without session', async () => {
-      const response = await request(app)
-        .get('/api/test/user')
-        .expect(401);
+    it('should return 401 for invalid session', (done) => {
+      db.user.findOne.mockReturnValue({
+        then: jest.fn().mockImplementation((callback) => {
+          callback(null);
+          return { catch: jest.fn() };
+        })
+      });
 
-      expect(response.body).toHaveProperty('message', 'No active session!');
+      request(server)
+        .get('/api/test/user-session')
+        .set('Cookie', ['sessionId=invalid-session-id'])
+        .expect(401)
+        .end((err, response) => {
+          if (err) return done(err);
+          
+          expect(response.body).toEqual({ 
+            message: "Session expired!" 
+          });
+          done();
+        });
     });
   });
 
   describe('GET /api/test/user-token', () => {
-    test('should access user content with valid token', async () => {
-      const response = await request(app)
+    it('should return user content for valid token', (done) => {
+      jwt.verify.mockImplementation((token, secret, callback) => {
+        callback(null, { id: 1 });
+      });
+
+      request(server)
         .get('/api/test/user-token')
         .set('x-access-token', 'valid-token')
-        .expect(200);
-
-      expect(response.text).toBe('Test User lab4.');
+        .expect(200)
+        .end((err, response) => {
+          if (err) return done(err);
+          
+          expect(response.text).toBe('Test User lab4.');
+          done();
+        });
     });
 
-    test('should deny access without token', async () => {
-      const response = await request(app)
-        .get('/api/test/user-token')
-        .expect(403);
+    it('should return 401 for invalid token', (done) => {
+      jwt.verify.mockImplementation((token, secret, callback) => {
+        callback(new Error('Invalid token'), null);
+      });
 
-      expect(response.body).toHaveProperty('message', 'No token provided!');
+      request(server)
+        .get('/api/test/user-token')
+        .set('x-access-token', 'invalid-token')
+        .expect(401)
+        .end((err, response) => {
+          if (err) return done(err);
+          
+          expect(response.body).toEqual({ 
+            message: "Unauthorized!" 
+          });
+          done();
+        });
     });
   });
 
   describe('GET /api/test/admin', () => {
-    test('should access admin content with valid session', async () => {
-      const response = await request(app)
-        .get('/api/test/admin')
-        .set('Cookie', ['sessionId=valid-session'])
-        .expect(200);
+    it('should return admin content for admin user with session', (done) => {
+      const mockUser = {
+        id: 1,
+        username: 'adminuser',
+        email: 'admin@example.com',
+        getRoles: jest.fn().mockReturnValue({
+          then: jest.fn().mockImplementation((callback) => {
+            callback([{ name: 'admin' }]);
+            return { catch: jest.fn() };
+          })
+        })
+      };
 
-      expect(response.text).toBe('Test Admin lab4.');
+      db.user.findOne.mockReturnValue({
+        then: jest.fn().mockImplementation((callback) => {
+          callback(mockUser);
+          return { catch: jest.fn() };
+        })
+      });
+
+      db.user.findByPk.mockReturnValue({
+        then: jest.fn().mockImplementation((callback) => {
+          callback(mockUser);
+          return { catch: jest.fn() };
+        })
+      });
+
+      request(server)
+        .get('/api/test/admin')
+        .set('Cookie', ['sessionId=valid-admin-session'])
+        .expect(200)
+        .end((err, response) => {
+          if (err) return done(err);
+          
+          expect(response.text).toBe('Test Admin lab4.');
+          done();
+        });
     });
 
-    test('should access admin content with valid token', async () => {
-      const response = await request(app)
-        .get('/api/test/admin')
-        .set('x-access-token', 'valid-token')
-        .expect(200);
+    it('should return 403 for non-admin user', (done) => {
+      const mockUser = {
+        id: 2,
+        username: 'regularuser',
+        email: 'user@example.com',
+        getRoles: jest.fn().mockReturnValue({
+          then: jest.fn().mockImplementation((callback) => {
+            callback([{ name: 'user' }]);
+            return { catch: jest.fn() };
+          })
+        })
+      };
 
-      expect(response.text).toBe('Test Admin lab4.');
+      db.user.findOne.mockReturnValue({
+        then: jest.fn().mockImplementation((callback) => {
+          callback(mockUser);
+          return { catch: jest.fn() };
+        })
+      });
+
+      db.user.findByPk.mockReturnValue({
+        then: jest.fn().mockImplementation((callback) => {
+          callback(mockUser);
+          return { catch: jest.fn() };
+        })
+      });
+
+      request(server)
+        .get('/api/test/admin')
+        .set('Cookie', ['sessionId=valid-user-session'])
+        .expect(403)
+        .end((err, response) => {
+          if (err) return done(err);
+          
+          expect(response.body).toEqual({ 
+            message: "Require Admin Role!" 
+          });
+          done();
+        });
     });
   });
 });

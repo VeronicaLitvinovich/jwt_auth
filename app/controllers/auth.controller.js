@@ -67,7 +67,7 @@ exports.signin = (req, res) => {
         {
           algorithm: 'HS256',
           allowInsecureKeySizes: true,
-          expiresIn: 900, 
+          expiresIn: 30, 
         });
 
       const refreshToken = jwt.sign({ id: user.id },
@@ -75,7 +75,7 @@ exports.signin = (req, res) => {
         {
           algorithm: 'HS256',
           allowInsecureKeySizes: true,
-          expiresIn: 180, 
+          expiresIn: 700, 
         });
 
       const sessionId = uuidv4();
@@ -143,7 +143,7 @@ exports.refreshToken = (req, res) => {
         {
           algorithm: 'HS256',
           allowInsecureKeySizes: true,
-          expiresIn: 900, 
+          expiresIn: 30, 
         });
 
       const newRefreshToken = jwt.sign({ id: user.id },
@@ -151,7 +151,7 @@ exports.refreshToken = (req, res) => {
         {
           algorithm: 'HS256',
           allowInsecureKeySizes: true,
-          expiresIn: 180, 
+          expiresIn: 700, 
         });
 
       user.update({

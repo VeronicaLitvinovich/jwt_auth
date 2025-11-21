@@ -113,6 +113,13 @@ verifySession = async (req, res, next) => {
 
 isAdmin = (req, res, next) => {
   User.findByPk(req.userId).then(user => {
+    if (!user) {
+      res.status(403).send({
+        message: "Require Admin Role!"
+      });
+      return;
+    }
+    
     user.getRoles().then(roles => {
       for (let i = 0; i < roles.length; i++) {
         if (roles[i].name === "admin") {
@@ -124,7 +131,10 @@ isAdmin = (req, res, next) => {
       res.status(403).send({
         message: "Require Admin Role!"
       });
-      return;
+    });
+  }).catch(err => {
+    res.status(500).send({
+      message: "Error checking admin role!"
     });
   });
 };

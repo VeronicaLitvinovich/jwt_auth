@@ -1,0 +1,4 @@
+mkdir -p __mocks__/config
+echo "module.exports = {
+  secret: \"test-lab4-secret-key\"
+};" > __mocks__/config/auth.config.js
