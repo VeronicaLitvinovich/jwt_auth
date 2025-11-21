@@ -1,7 +1,7 @@
 {
   "name": "lab4_test",
   "version": "1.0.0",
-  "description": "",
+  "description": "JWT Authentication API with Hybrid Sessions",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,19 +9,17 @@
     "test": "NODE_ENV=test jest --verbose --detectOpenHandles",
     "test:unit": "NODE_ENV=test jest tests/unit --verbose --coverage --detectOpenHandles",
     "test:integration": "NODE_ENV=test jest tests/integration --verbose --coverage --detectOpenHandles",
-    "test:watch": "NODE_ENV=test jest --watch --detectOpenHandles"
+    "test:watch": "NODE_ENV=test jest --watch --detectOpenHandles",
+    "audit:fix": "npm audit fix"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["authentication", "jwt", "session", "express", "postgres"],
+  "author": "Your Name",
   "license": "ISC",
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "connect-pg-simple": "^10.0.0",
-    "connect-session-sequelize": "^8.0.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "express-session": "^1.18.2",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.16.3",
     "pg-hstore": "^2.3.4",
@@ -29,20 +27,11 @@
     "uuid": "^10.0.0"
   },
   "devDependencies": {
-    "jest": "^30.2.0",
-    "nodemon": "^3.1.7",
-    "supertest": "^7.1.4"
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4",
+    "nodemon": "^3.0.2"
   },
-  "jest": {
-    "testEnvironment": "node",
-    "setupFilesAfterEnv": [
-      "./tests/setup.js"
-    ],
-    "coverageReporters": [
-      "text",
-      "lcov",
-      "html"
-    ],
-    "testTimeout": 30000
+  "engines": {
+    "node": ">=14.0.0"
   }
 }
