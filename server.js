@@ -18,14 +18,26 @@ if (process.env.NODE_ENV !== 'test') {
   const db = require("./app/models");
   const Role = db.role;
 
+  console.log('🔧 Environment:', process.env.NODE_ENV);
+  console.log('🔧 Database URL:', process.env.DATABASE_URL ? 'Present' : 'Not present');
+  console.log('🔧 DB Host from config:', process.env.DB_HOST);
+
+
   const syncOptions = process.env.NODE_ENV === 'production' 
-    ? { force: false } 
+    ? { force: false }  
     : { force: true };  
 
   const connectWithRetry = () => {
-    db.sequelize.sync(syncOptions)
+    console.log('🔄 Attempting to connect to database...');
+    
+    db.sequelize.authenticate()
       .then(() => {
-        console.log('✅ Database connected successfully');
+        console.log('✅ Database connection established successfully.');
+        
+        return db.sequelize.sync(syncOptions);
+      })
+      .then(() => {
+        console.log('✅ Database synchronized successfully');
         if (syncOptions.force) {
           initial();
         }
@@ -37,16 +49,23 @@ if (process.env.NODE_ENV !== 'test') {
       });
   };
 
-  connectWithRetry();
+  setTimeout(() => {
+    connectWithRetry();
+  }, 2000); 
 
   function initial() {
     Role.findOrCreate({
       where: { id: 1 },
       defaults: { name: "user" }
+    }).then(([role, created]) => {
+      if (created) console.log('✅ Created user role');
     });
+    
     Role.findOrCreate({
       where: { id: 2 },
       defaults: { name: "admin" }
+    }).then(([role, created]) => {
+      if (created) console.log('✅ Created admin role');
     });
   }
 }
@@ -55,7 +74,8 @@ app.get("/health", (req, res) => {
   res.status(200).json({ 
     status: "OK", 
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    message: "Service is running"
   });
 });
 
@@ -63,7 +83,7 @@ app.get("/", (req, res) => {
   res.json({ 
     message: "Test lab 4! Hybrid Auth - Railway Deployment",
     environment: process.env.NODE_ENV || 'development',
-    database: process.env.DATABASE_URL ? "Connected" : "Not configured"
+    status: "Running successfully"
   });
 });
 
@@ -72,11 +92,9 @@ require('./app/routes/user.routes')(app);
 
 const PORT = process.env.PORT || 8080;
 
-if (process.env.NODE_ENV !== 'test') {
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-  });
-  module.exports = server;
-} else {
-  module.exports = app;
-}
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server is running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+  console.log(`📍 Health check available at: http://0.0.0.0:${PORT}/health`);
+});
+
+module.exports = server;

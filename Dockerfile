@@ -1,15 +1,17 @@
-FROM node:14
+FROM node:18-alpine
 
 WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm install
+RUN npm ci --only=production
 
 COPY . .
 
-COPY wait-for-it.sh ./
-RUN chmod +x wait-for-it.sh
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+USER nextjs
 
 EXPOSE 8080
-CMD ["./wait-for-it.sh", "db", "--", "node", "server.js"]
+
+CMD ["npm", "start"]
