@@ -3,7 +3,7 @@ name: Deploy to GitHub Runner
 on:
   push:
     branches: [main]
-  workflow_dispatch:
+  workflow_dispatch: # Позволяет запускать вручную
 
 env:
   NODE_ENV: production
@@ -45,7 +45,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Wait for PostgreSQL
         run: |
@@ -90,10 +90,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "18.x"
-          cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Wait for PostgreSQL
         run: |
@@ -105,46 +104,62 @@ jobs:
         run: |
           npm start &
           echo "Application starting in background..."
-          sleep 10
+          sleep 15
 
       - name: Wait for application to be ready
         run: |
-          timeout 60s bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+          timeout 120s bash -c '
+            while ! curl -f http://localhost:8080/health > /dev/null 2>&1; do
+              echo "Waiting for application to start..."
+              sleep 5
+            done
+          '
           echo "✅ Application is ready!"
 
       - name: Test API endpoints
         run: |
+          echo "🧪 Testing API endpoints..."
+
           # Test health endpoint
+          echo "1. Testing health endpoint..."
           curl -f http://localhost:8080/health
-          echo "Health check passed"
+          echo -e "\n✅ Health check passed"
 
           # Test main endpoint
+          echo -e "\n2. Testing main endpoint..."
           curl -f http://localhost:8080/
-          echo "Main endpoint passed"
+          echo -e "\n✅ Main endpoint passed"
 
           # Test user registration
+          echo -e "\n3. Testing user registration..."
           curl -X POST http://localhost:8080/api/auth/signup \
             -H "Content-Type: application/json" \
-            -d '{"username":"githubuser","email":"github@example.com","password":"password123"}' || echo "Registration completed"
+            -d '{"username":"githubuser","email":"github@example.com","password":"password123"}' \
+            -w "\nHTTP Status: %{http_code}\n" || echo "Registration test completed"
 
           # Test user login
+          echo -e "\n4. Testing user login..."
           curl -X POST http://localhost:8080/api/auth/signin \
             -H "Content-Type: application/json" \
-            -d '{"username":"githubuser","password":"password123"}' || echo "Login test completed"
+            -d '{"username":"githubuser","password":"password123"}' \
+            -w "\nHTTP Status: %{http_code}\n" || echo "Login test completed"
+
+          echo -e "\n🎉 All API tests completed!"
 
       - name: Keep application running for demonstration
         run: |
-          echo "🚀 Application is running on GitHub Runner"
+          echo "🚀 Application is successfully running on GitHub Runner"
           echo "📍 Health check: http://localhost:8080/health"
           echo "📍 Main endpoint: http://localhost:8080/"
-          echo "⏰ Keeping application alive for 5 minutes for demonstration..."
-          sleep 300
+          echo "📍 API documentation available at root endpoint"
+          echo "⏰ Keeping application alive for 3 minutes for demonstration..."
+          sleep 180
 
       - name: Upload deployment logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: deployment-logs
+          name: deployment-results
           path: |
             *.log
           retention-days: 1
