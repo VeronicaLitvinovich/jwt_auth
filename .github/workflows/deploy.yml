@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     env:
       NODE_ENV: test
@@ -64,7 +64,7 @@ jobs:
 
   deploy:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     if: github.ref == 'refs/heads/main'
 
     env:
@@ -162,5 +162,5 @@ jobs:
           echo "📍 Health check: http://localhost:8080/health"
           echo "📍 Main endpoint: http://localhost:8080/"
           echo "📍 API documentation available at root endpoint"
-          echo "⏰ Keeping application alive for 3 minutes for demonstration..."
-          sleep 180
+          echo "⏰ Keeping application alive for 10 seconds for demonstration..."
+          sleep 10
