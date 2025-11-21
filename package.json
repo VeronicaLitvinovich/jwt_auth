@@ -1,7 +1,7 @@
 {
   "name": "lab4_test",
   "version": "1.0.0",
-  "description": "JWT Authentication API with Hybrid Sessions",
+  "description": "JWT Authentication API deployed on GitHub Runner",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,16 +9,9 @@
     "test": "NODE_ENV=test jest --verbose --detectOpenHandles",
     "test:unit": "NODE_ENV=test jest tests/unit --verbose --coverage --detectOpenHandles",
     "test:integration": "NODE_ENV=test jest tests/integration --verbose --coverage --detectOpenHandles",
-    "test:watch": "NODE_ENV=test jest --watch --detectOpenHandles",
-    "audit:fix": "npm audit fix"
+    "test:watch": "NODE_ENV=test jest --watch --detectOpenHandles"
   },
-  "keywords": [
-    "authentication",
-    "jwt",
-    "session",
-    "express",
-    "postgres"
-  ],
+  "keywords": ["authentication", "jwt", "session", "express", "postgres", "github-actions"],
   "author": "Your Name",
   "license": "ISC",
   "dependencies": {
@@ -28,15 +21,14 @@
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.16.3",
-    "pg-connection-string": "^2.9.1",
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.7",
     "uuid": "^10.0.0"
   },
   "devDependencies": {
-    "jest": "^29.7.0",
-    "nodemon": "^3.0.2",
-    "supertest": "^6.3.4"
+    "jest": "^30.2.0",
+    "supertest": "^7.1.4",
+    "nodemon": "^3.1.7"
   },
   "engines": {
     "node": ">=14.0.0"

@@ -5,7 +5,7 @@ const cookieParser = require("cookie-parser");
 const app = express();
 
 const corsOptions = {
-  origin: process.env.CLIENT_URL || "http://localhost:8081",
+  origin: process.env.CLIENT_URL || "http://localhost:3000",
   credentials: true
 };
 
@@ -18,83 +18,111 @@ if (process.env.NODE_ENV !== 'test') {
   const db = require("./app/models");
   const Role = db.role;
 
-  console.log('🔧 Environment:', process.env.NODE_ENV);
-  console.log('🔧 Database URL:', process.env.DATABASE_URL ? 'Present' : 'Not present');
-  console.log('🔧 DB Host from config:', process.env.DB_HOST);
-
+  console.log('🚀 Starting application in', process.env.NODE_ENV, 'mode');
+  console.log('🔧 Database config:', {
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    database: process.env.DB_NAME
+  });
 
   const syncOptions = process.env.NODE_ENV === 'production' 
-    ? { force: false }  
-    : { force: true };  
+    ? { force: false }
+    : { force: true };
 
   const connectWithRetry = () => {
-    console.log('🔄 Attempting to connect to database...');
-    
     db.sequelize.authenticate()
       .then(() => {
         console.log('✅ Database connection established successfully.');
-        
         return db.sequelize.sync(syncOptions);
       })
       .then(() => {
         console.log('✅ Database synchronized successfully');
         if (syncOptions.force) {
-          initial();
+          initializeRoles();
         }
       })
       .catch(err => {
         console.error('❌ Database connection failed:', err.message);
-        console.log('🔄 Retrying in 5 seconds...');
-        setTimeout(connectWithRetry, 5000);
+        console.log('🔄 Retrying in 3 seconds...');
+        setTimeout(connectWithRetry, 3000);
       });
   };
 
   setTimeout(() => {
     connectWithRetry();
-  }, 2000); 
+  }, 2000);
 
-  function initial() {
+  function initializeRoles() {
     Role.findOrCreate({
       where: { id: 1 },
       defaults: { name: "user" }
-    }).then(([role, created]) => {
-      if (created) console.log('✅ Created user role');
     });
-    
     Role.findOrCreate({
       where: { id: 2 },
       defaults: { name: "admin" }
-    }).then(([role, created]) => {
-      if (created) console.log('✅ Created admin role');
     });
+    console.log('✅ Default roles initialized');
   }
 }
 
 app.get("/health", (req, res) => {
   res.status(200).json({ 
-    status: "OK", 
+    status: "OK",
+    service: "JWT Auth API",
+    environment: process.env.NODE_ENV,
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    message: "Service is running"
+    github_runner: true
   });
 });
 
 app.get("/", (req, res) => {
   res.json({ 
-    message: "Test lab 4! Hybrid Auth - Railway Deployment",
-    environment: process.env.NODE_ENV || 'development',
-    status: "Running successfully"
+    message: "🚀 JWT Authentication API - Deployed on GitHub Runner",
+    version: "1.0.0",
+    environment: process.env.NODE_ENV,
+    status: "Operational",
+    endpoints: {
+      health: "/health",
+      auth: {
+        signup: "POST /api/auth/signup",
+        signin: "POST /api/auth/signin",
+        refresh: "POST /api/auth/refresh",
+        logout: "POST /api/auth/logout"
+      },
+      protected: {
+        user: "GET /api/test/user",
+        admin: "GET /api/test/admin"
+      }
+    }
   });
 });
 
 require('./app/routes/auth.routes')(app);
 require('./app/routes/user.routes')(app);
 
+app.use((req, res) => {
+  res.status(404).json({ 
+    error: "Route not found",
+    path: req.path
+  });
+});
+
+app.use((err, req, res, next) => {
+  console.error('Error:', err.message);
+  res.status(500).json({ 
+    error: process.env.NODE_ENV === 'production' 
+      ? 'Internal server error' 
+      : err.message 
+  });
+});
+
 const PORT = process.env.PORT || 8080;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server is running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-  console.log(`📍 Health check available at: http://0.0.0.0:${PORT}/health`);
+  console.log(`🎉 Server is running on port ${PORT}`);
+  console.log(`🏥 Health check: http://0.0.0.0:${PORT}/health`);
+  console.log(`📚 API documentation: http://0.0.0.0:${PORT}/`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
 });
 
 module.exports = server;
