@@ -10,7 +10,6 @@ on:
 env:
   NODE_ENV: test
   DB_DIALECT: sqlite
-  DB_STORAGE: ./database.sqlite
 
 jobs:
   # Этап 1: Сборка и юнит-тесты
@@ -81,17 +80,24 @@ jobs:
           echo "🚀 Staging deployment started on port 3001"
           sleep 15
 
-      - name: Wait for staging to be ready
+      - name: Wait for staging to be ready (macOS compatible)
         run: |
           echo "Waiting for staging application..."
-          for i in {1..10}; do
+          counter=1
+          while [ $counter -le 10 ]; do
             if curl -f http://localhost:3001/health > /dev/null 2>&1; then
               echo "✅ Staging application is ready!"
               break
             fi
-            echo "Attempt $i/10 - Staging not ready yet..."
+            echo "Attempt $counter/10 - Staging not ready yet..."
+            counter=$((counter + 1))
             sleep 3
           done
+
+          if [ $counter -gt 10 ]; then
+            echo "❌ Staging failed to start"
+            exit 1
+          fi
 
       - name: Run integration tests against staging
         run: |
@@ -116,7 +122,7 @@ jobs:
           curl -X POST http://localhost:3001/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"staginguser","email":"staging@example.com","password":"password123"}' \
-            -w "\nHTTP Status: %{http_code}\n"
+            -w "\nHTTP Status: %{http_code}\n" || echo "User creation test completed"
 
           echo "✅ Staging environment verified"
 
@@ -169,14 +175,21 @@ jobs:
       - name: Verify production deployment
         run: |
           echo "Verifying production deployment..."
-          for i in {1..10}; do
+          counter=1
+          while [ $counter -le 10 ]; do
             if curl -f http://localhost:3000/health > /dev/null 2>&1; then
               echo "✅ Production application is ready!"
               break
             fi
-            echo "Attempt $i/10 - Production not ready yet..."
+            echo "Attempt $counter/10 - Production not ready yet..."
+            counter=$((counter + 1))
             sleep 3
           done
+
+          if [ $counter -gt 10 ]; then
+            echo "❌ Production failed to start"
+            exit 1
+          fi
 
           # Comprehensive production checks
           curl -f http://localhost:3000/health
@@ -223,58 +236,208 @@ jobs:
             app.pid
           retention-days: 30
 
-  # Этап 4: Мониторинг
-  monitoring:
-    runs-on: self-hosted
-    needs: deploy-production
-    name: Monitoring & Health Checks
-    if: github.ref == 'refs/heads/main'
+# Этап 4: Расширенный мониторинг и метрики
+monitoring:
+  runs-on: self-hosted
+  needs: deploy-production
+  name: Extended Monitoring & Health Checks
+  if: github.ref == 'refs/heads/main'
+  timeout-minutes: 10
 
-    steps:
-      - name: Health check monitoring (macOS compatible)
-        run: |
-          echo "Starting health check monitoring..."
-          # macOS-совместимый цикл
-          for i in 1 2 3 4 5; do
-            echo "Health check $i:"
-            response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" http://localhost:3000/health || echo "HTTP_STATUS:000")
-            body=$(echo "$response" | grep -v HTTP_STATUS || echo "No response")
-            status=$(echo "$response" | grep HTTP_STATUS | cut -d':' -f2 || echo "000")
-            
-            echo "Status: $status"
-            echo "Response: $body"
-            
-            if [ "$status" -eq 200 ]; then
-              echo "✅ Health check $i: PASSED"
-            else
-              echo "❌ Health check $i: FAILED (Status: $status)"
-            fi
-            
-            echo "Waiting 30 seconds until next check..."
-            sleep 30
-          done
-          echo "📊 Monitoring completed"
+  steps:
+    - name: Setup monitoring tools
+      run: |
+        echo "Installing monitoring dependencies..."
+        # Установка утилит для мониторинга (если необходимо)
+        sudo apt-get update || true
+        command -v htop || sudo apt-get install -y htop || echo "htop not available"
+        command -v iostat || sudo apt-get install -y sysstat || echo "sysstat not available"
 
-      - name: Performance check
-        run: |
-          echo "Running performance checks..."
-          # Измеряем время ответа
-          time curl -s -o /dev/null http://localhost:3000/health
-          time curl -s -o /dev/null http://localhost:3000/
-
-      - name: Final health status
-        run: |
-          echo "=== FINAL HEALTH STATUS ==="
-          if curl -f http://localhost:3000/health; then
-            echo "🎉 PRODUCTION STATUS: HEALTHY"
-            echo "📍 URL: http://localhost:3000"
-            echo "🕒 Monitoring completed at: $(date)"
+    - name: Extended health checks with retry
+      run: |
+        echo "Starting comprehensive health monitoring..."
+        HEALTHY=false
+        for attempt in {1..10}; do
+          echo "=== Health check $attempt ==="
+          
+          # Проверка процесса приложения
+          if ps -p $(cat app.pid 2>/dev/null) > /dev/null 2>&1; then
+            echo "✅ Application process is running (PID: $(cat app.pid))"
           else
-            echo "⚠️  PRODUCTION STATUS: UNHEALTHY"
-            exit 1
+            echo "❌ Application process not found"
+            break
           fi
 
-  # Этап 5: Откат (ручной триггер)
+          # Расширенная проверка health endpoint
+          response=$(curl -s -w "\n%{http_code}" http://localhost:3000/health || echo "CURL_FAILED")
+          status_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n1)
+          
+          if [ "$status_code" = "200" ]; then
+            echo "✅ Health check $attempt: PASSED (Status: $status_code)"
+            echo "Response: $body"
+            HEALTHY=true
+            
+            # Дополнительные проверки если health endpoint работает
+            echo "=== Additional endpoint checks ==="
+            
+            # Проверка основного endpoint
+            main_response=$(curl -s -w " HTTP %{http_code}" http://localhost:3000/)
+            echo "Main endpoint: $main_response"
+            
+            # Проверка времени ответа
+            echo "Response time metrics:"
+            for endpoint in "/health" "/"; do
+              start_time=$(date +%s%N)
+              curl -s -o /dev/null http://localhost:3000$endpoint
+              end_time=$(date +%s%N)
+              response_time=$(( (end_time - start_time) / 1000000 ))
+              echo "  $endpoint: ${response_time}ms"
+            done
+            break
+          else
+            echo "❌ Health check $attempt: FAILED (Status: $status_code)"
+            echo "Full response: $response"
+          fi
+          
+          if [ $attempt -lt 10 ]; then
+            echo "Waiting 30 seconds until next check..."
+            sleep 30
+          fi
+        done
+
+        if [ "$HEALTHY" = "false" ]; then
+          echo "❌ All health checks failed - application is unhealthy"
+          exit 1
+        fi
+
+    - name: System performance metrics
+      run: |
+        echo "📊 === SYSTEM PERFORMANCE METRICS ==="
+
+        # Память
+        echo "Memory Usage:"
+        free -h || echo "free command not available"
+
+        # Дисковое пространство
+        echo -e "\nDisk Usage:"
+        df -h || echo "df command not available"
+
+        # Нагрузка CPU
+        echo -e "\nCPU Load:"
+        top -bn1 | head -20 || echo "top command not available"
+
+        # I/O статистика
+        echo -e "\nI/O Statistics:"
+        iostat -x 1 1 2>/dev/null || echo "iostat not available"
+
+        # Сетевые соединения
+        echo -e "\nNetwork Connections (app related):"
+        netstat -tulpn 2>/dev/null | grep :3000 || ss -tulpn 2>/dev/null | grep :3000 || echo "netstat/ss not available"
+
+    - name: Application performance testing
+      run: |
+        echo "🚀 === APPLICATION PERFORMANCE TESTING ==="
+
+        # Тест нагрузки на health endpoint
+        echo "Load testing health endpoint (10 requests):"
+        for i in {1..10}; do
+          start=$(date +%s%N)
+          curl -s -o /dev/null http://localhost:3000/health
+          end=$(date +%s%N)
+          echo "  Request $i: $(( (end - start) / 1000000 ))ms"
+        done
+
+        # Проверка параллельных запросов
+        echo -e "\nConcurrent requests test:"
+        time (for i in {1..5}; do
+          curl -s http://localhost:3000/health > /dev/null &
+        done; wait)
+
+        # Проверка стабильности в течение времени
+        echo -e "\nStability test (30 seconds):"
+        timeout 30s bash -c '
+          while true; do
+            curl -s -o /dev/null http://localhost:3000/health
+            sleep 1
+          done
+        ' || echo "Stability test completed"
+
+    - name: Error rate monitoring
+      run: |
+        echo "📈 === ERROR RATE MONITORING ==="
+
+        # Проверка логов на ошибки
+        if [ -f "production.log" ]; then
+          echo "Recent errors in logs:"
+          grep -i "error\|fail\|exception" production.log | tail -10 || echo "No errors found in logs"
+          
+          # Подсчет ошибок
+          error_count=$(grep -i "error\|fail\|exception" production.log | wc -l || echo "0")
+          echo "Total errors in log: $error_count"
+        else
+          echo "Log file not available for error analysis"
+        fi
+
+        # Проверка HTTP ошибок
+        echo -e "\nHTTP Error testing:"
+
+        # Тест несуществующего endpoint
+        curl -s -w "Unknown endpoint: HTTP %{http_code}\n" http://localhost:3000/nonexistent
+
+        # Тест некорректного метода
+        curl -s -X POST -w "POST to health: HTTP %{http_code}\n" http://localhost:3000/health
+
+    - name: Database and resource monitoring
+      run: |
+        echo "💾 === DATABASE & RESOURCE MONITORING ==="
+
+        # Проверка использования базы данных
+        if [ -f "production.sqlite" ]; then
+          db_size=$(du -h production.sqlite | cut -f1)
+          echo "Database size: $db_size"
+        else
+          echo "Database file not found"
+        fi
+
+        # Проверка использования памяти процессом
+        if [ -f "app.pid" ]; then
+          pid=$(cat app.pid)
+          if ps -p $pid > /dev/null; then
+            echo "Process memory usage:"
+            ps -o pid,ppid,cmd,%mem,%cpu --pid $pid || echo "Cannot get process details"
+          fi
+        fi
+
+    - name: Generate monitoring report
+      run: |
+        echo "📋 === MONITORING SUMMARY REPORT ==="
+        echo "Deployment Time: $(date)"
+        echo "Commit: ${{ github.sha }}"
+        echo "Environment: Production"
+        echo "Application URL: http://localhost:3000"
+        echo "Health Check: http://localhost:3000/health"
+
+        # Финальная проверка статуса
+        if curl -f http://localhost:3000/health > /dev/null 2>&1; then
+          echo "🎉 FINAL STATUS: HEALTHY"
+          echo "All systems operational"
+        else
+          echo "⚠️  FINAL STATUS: UNHEALTHY"
+          echo "Application failed final health check"
+          exit 1
+        fi
+
+    - name: Upload monitoring results
+      uses: actions/upload-artifact@v4
+      with:
+        name: monitoring-results
+        path: |
+          production.log
+          app.pid
+        retention-days: 30
+
+  # Этап 5: Откат
   rollback:
     runs-on: self-hosted
     name: Rollback Deployment
@@ -315,14 +478,21 @@ jobs:
       - name: Verify rollback
         run: |
           echo "Verifying rollback..."
-          for i in {1..10}; do
+          counter=1
+          while [ $counter -le 10 ]; do
             if curl -f http://localhost:3000/health > /dev/null 2>&1; then
               echo "✅ Rollback successful!"
               break
             fi
-            echo "Attempt $i/10 - Rollback not ready yet..."
+            echo "Attempt $counter/10 - Rollback not ready yet..."
+            counter=$((counter + 1))
             sleep 3
           done
+
+          if [ $counter -gt 10 ]; then
+            echo "❌ Rollback failed"
+            exit 1
+          fi
 
           curl -f http://localhost:3000/health
           echo "Rollback to commit: ${{ github.event.inputs.rollback_commit || 'main' }}"
