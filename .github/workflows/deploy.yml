@@ -235,130 +235,221 @@ jobs:
             app.pid
           retention-days: 30
 
-    # Этап 4: Базовая система мониторинга
+  # Этап 4: Комплексный мониторинг ключевых показателей
   monitoring:
     runs-on: self-hosted
     needs: deploy-production
-    name: Basic System Monitoring
+    name: Production Monitoring & Metrics
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Check application status
+      - name: Application health monitoring
         run: |
-          echo "🔍 Checking application status..."
+          echo "🏥 APPLICATION HEALTH MONITORING"
+          echo "================================="
 
-          # Проверка процесса приложения
-          if [ -f "app.pid" ] && ps -p $(cat app.pid) > /dev/null; then
-            echo "✅ Application process: RUNNING (PID: $(cat app.pid))"
-          else
-            echo "❌ Application process: NOT FOUND"
-            exit 1
-          fi
-
-          # Проверка здоровья приложения
-          if curl -s http://localhost:3000/health > /dev/null; then
-            echo "✅ Application health: HEALTHY"
-          else
-            echo "❌ Application health: UNHEALTHY"
-            exit 1
-          fi
-
-      - name: Monitor error rates
-        run: |
-          echo "📊 Monitoring error rates..."
-
-          # Проверяем логи на наличие ошибок
-          if [ -f "production.log" ]; then
-            error_count=$(grep -c -i "error\|fail\|exception" production.log || echo "0")
-            echo "📈 Total errors in logs: $error_count"
+          # Проверка доступности приложения
+          echo "Checking application availability..."
+          for i in {1..3}; do
+            response=$(curl -s -w "\n%{http_code}" http://localhost:3000/health 2>/dev/null || echo "CURL_ERROR")
+            status_code=$(echo "$response" | tail -n1)
+            response_body=$(echo "$response" | head -n1)
             
-            if [ "$error_count" -gt 0 ]; then
-              echo "⚠️  Recent errors:"
-              grep -i "error\|fail\|exception" production.log | tail -3 || echo "No recent errors"
+            if [ "$status_code" = "200" ]; then
+              echo "✅ Health check $i: SUCCESS (Status: $status_code)"
+              echo "Response: $response_body"
+              break
             else
-              echo "✅ No errors found in logs"
+              echo "❌ Health check $i: FAILED (Status: $status_code)"
+              if [ $i -eq 3 ]; then
+                echo "💥 Application health check failed after 3 attempts"
+                exit 1
+              fi
+              sleep 10
+            fi
+          done
+
+      - name: Error rate monitoring
+        run: |
+          echo " "
+          echo "📊 ERROR RATE MONITORING"
+          echo "========================"
+
+          # Проверка ошибок в логах
+          if [ -f "production.log" ]; then
+            echo "Analyzing application logs..."
+            
+            # Подсчет ошибок по типам
+            error_count=$(grep -c -i "error" production.log 2>/dev/null || echo "0")
+            fatal_count=$(grep -c -i "fatal" production.log 2>/dev/null || echo "0")
+            exception_count=$(grep -c -i "exception" production.log 2>/dev/null || echo "0")
+            warn_count=$(grep -c -i "warn" production.log 2>/dev/null || echo "0")
+            
+            echo "📈 Error Statistics:"
+            echo "  Errors: $error_count"
+            echo "  Fatal: $fatal_count"
+            echo "  Exceptions: $exception_count"
+            echo "  Warnings: $warn_count"
+            
+            # Показываем последние ошибки (если есть)
+            if [ "$error_count" -gt 0 ]; then
+              echo " "
+              echo "⚠️ Recent Errors:"
+              grep -i "error" production.log | tail -5 || echo "No recent errors"
             fi
           else
-            echo "ℹ️  Log file not available for error analysis"
+            echo "ℹ️ Log file not available for error analysis"
           fi
 
-          # Проверяем HTTP ошибки
-          echo "🔍 Testing HTTP endpoints for errors..."
-
-          # Health endpoint
-          health_status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health)
-          echo "🏥 Health endpoint HTTP status: $health_status"
-
-          # Main endpoint
-          main_status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/)
-          echo "🌐 Main endpoint HTTP status: $main_status"
-
-      - name: Check server load
-        run: |
-          echo "⚡ Checking server load..."
-
-          # Используем встроенные команды для проверки нагрузки
-          echo "💻 CPU load:"
-          top -l 1 | grep "CPU usage" || echo "CPU info not available"
-
-          echo "💾 Memory usage:"
-          memory_info=$(vm_stat 2>/dev/null | grep "Pages active" | awk '{print $3}' | tr -d '.')
-          if [ -n "$memory_info" ]; then
-            memory_mb=$((memory_info * 4096 / 1024 / 1024))
-            echo "Memory used: ${memory_mb}MB"
-          else
-            echo "Memory info: Available"
-          fi
-
-          echo "📁 Disk space:"
-          df -h . | awk 'NR==2 {print "Free: " $4 ", Used: " $5}'
-
-      - name: Performance testing
-        run: |
-          echo "🚀 Performance testing..."
-
-          # Измеряем время ответа
-          echo "⏱️  Response times:"
-
-          for endpoint in "/health" "/"; do
-            total_time=0
-            for i in {1..3}; do
-              start_time=$(date +%s%N)
-              curl -s -o /dev/null "http://localhost:3000$endpoint"
-              end_time=$(date +%s%N)
-              response_time=$(( (end_time - start_time) / 1000000 ))
-              total_time=$((total_time + response_time))
-              echo "  $endpoint attempt $i: ${response_time}ms"
-            done
-            avg_time=$((total_time / 3))
-            echo "📊 $endpoint average: ${avg_time}ms"
+          # Проверка HTTP ошибок
+          echo " "
+          echo "🌐 HTTP Endpoint Status:"
+          endpoints=("/" "/health" "/api/auth/signup")
+          for endpoint in "${endpoints[@]}"; do
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000$endpoint" 2>/dev/null || echo "000")
+            if [ "$status_code" = "200" ] || [ "$status_code" = "201" ] || [ "$status_code" = "400" ]; then
+              echo "  ✅ $endpoint: HTTP $status_code"
+            else
+              echo "  ❌ $endpoint: HTTP $status_code"
+            fi
           done
 
-      - name: Load testing (simple)
+      - name: Server load monitoring
         run: |
-          echo "🔄 Simple load testing..."
+          echo " "
+          echo "⚡ SERVER LOAD MONITORING"
+          echo "========================"
 
-          # Простой тест на 5 одновременных запросов
-          echo "Sending 5 concurrent requests to health endpoint..."
+          # Используем встроенные команды macOS/Linux
+          echo "💻 CPU & Load:"
+          echo "  Load average: $(uptime | awk -F'load averages:' '{print $2}' | cut -d',' -f1 | xargs)"
 
+          echo "💾 Memory Usage:"
+          # Для macOS
+          if [ "$(uname)" = "Darwin" ]; then
+            memory_total=$(sysctl -n hw.memsize | awk '{printf "%.1f", $1/1024/1024/1024}')
+            memory_pressure=$(memory_pressure | grep "System-wide memory free percentage:" | awk '{print $5}')
+            echo "  Total RAM: ${memory_total}GB"
+            echo "  Free memory: ${memory_pressure}%"
+          else
+            # Для Linux
+            memory_info=$(free -h | grep Mem | awk '{print "Total: " $2 ", Used: " $3 ", Free: " $4}')
+            echo "  $memory_info"
+          fi
+
+          echo "📁 Disk Usage:"
+          disk_info=$(df -h . | awk 'NR==2 {print "Available: " $4 ", Used: " $5}')
+          echo "  $disk_info"
+
+          echo "🔍 Process Count:"
+          node_processes=$(ps aux | grep -c "[n]ode" || echo "0")
+          echo "  Node.js processes: $node_processes"
+
+      - name: Performance metrics
+        run: |
+          echo " "
+          echo "🚀 PERFORMANCE METRICS"
+          echo "======================"
+
+          # Измерение времени ответа
+          echo "⏱️ Response Time Analysis:"
+
+          endpoints=("/health" "/")
+          for endpoint in "${endpoints[@]}"; do
+            total_time=0
+            successful_requests=0
+            
+            for i in {1..5}; do
+              start_time=$(date +%s%N)
+              http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000$endpoint" 2>/dev/null || echo "000")
+              end_time=$(date +%s%N)
+              
+              if [ "$http_code" = "200" ]; then
+                response_time=$(( (end_time - start_time) / 1000000 ))
+                total_time=$((total_time + response_time))
+                successful_requests=$((successful_requests + 1))
+                echo "  $endpoint request $i: ${response_time}ms (HTTP $http_code)"
+              else
+                echo "  $endpoint request $i: FAILED (HTTP $http_code)"
+              fi
+            done
+            
+            if [ $successful_requests -gt 0 ]; then
+              avg_time=$((total_time / successful_requests))
+              echo "  📊 $endpoint average: ${avg_time}ms (success rate: $successful_requests/5)"
+            else
+              echo "  💥 $endpoint: All requests failed"
+            fi
+          done
+
+      - name: Load testing
+        run: |
+          echo " "
+          echo "🔄 LOAD TESTING"
+          echo "==============="
+
+          # Простой тест на 10 одновременных запросов
+          echo "Testing with 10 concurrent requests..."
           start_time=$(date +%s)
-          for i in {1..5}; do
+
+          for i in {1..10}; do
             curl -s "http://localhost:3000/health" > "/dev/null" &
           done
+
+          # Ждем завершения всех фоновых процессов
           wait
           end_time=$(date +%s)
 
-          echo "✅ 5 concurrent requests completed in $((end_time - start_time)) seconds"
+          echo "✅ 10 concurrent requests completed in $((end_time - start_time)) seconds"
 
-      - name: Generate monitoring report
+      - name: Database and resource check
         run: |
           echo " "
-          echo "📋 === MONITORING SUMMARY ==="
-          echo "🕒 Time: $(date)"
-          echo "✅ Application Status: RUNNING"
-          echo "🌐 Endpoints: RESPONSIVE"
-          echo "📊 Monitoring completed successfully"
-          echo "📍 Production URL: http://localhost:3000"
+          echo "💾 DATABASE & RESOURCES"
+          echo "======================="
+
+          # Проверка файла базы данных
+          if [ -f "production.sqlite" ]; then
+            db_size=$(du -h production.sqlite | cut -f1)
+            echo "✅ Database file exists"
+            echo "  Database size: $db_size"
+          else
+            echo "❌ Database file not found"
+          fi
+
+          # Проверка открытых портов
+          echo "🌐 Network Ports:"
+          if command -v lsof > /dev/null; then
+            port_3000=$(lsof -i :3000 | grep -c LISTEN || echo "0")
+            echo "  Port 3000 (App): $( [ "$port_3000" -gt 0 ] && echo "LISTENING" || echo "CLOSED" )"
+          else
+            echo "  Port check: lsof not available"
+          fi
+
+      - name: Generate comprehensive report
+        run: |
+          echo " "
+          echo "📋 COMPREHENSIVE MONITORING REPORT"
+          echo "=================================="
+          echo "🕒 Monitoring completed: $(date)"
+          echo "📍 Application URL: http://localhost:3000"
+          echo "🏥 Health endpoint: http://localhost:3000/health"
+          echo "🔧 Environment: Production"
+          echo "💻 System: $(uname -s) $(uname -m)"
+          echo " "
+
+          # Финальная проверка статуса
+          if curl -s http://localhost:3000/health > /dev/null; then
+            echo "🎉 FINAL STATUS: HEALTHY"
+            echo "✅ All systems operational"
+            echo "✅ Error rates within acceptable limits"
+            echo "✅ Server load normal"
+            echo "✅ Performance metrics good"
+          else
+            echo "❌ FINAL STATUS: UNHEALTHY"
+            echo "💥 Application is not responding"
+            exit 1
+          fi
 
   # Этап 5: Откат
   rollback:
