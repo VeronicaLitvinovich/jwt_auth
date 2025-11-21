@@ -235,54 +235,283 @@ jobs:
             app.pid
           retention-days: 30
 
-    # Этап 4: Минимальный мониторинг
+    # Этап 4: Комплексный мониторинг ключевых показателей
   monitoring:
     runs-on: self-hosted
     needs: deploy-production
-    name: Quick System Check
+    name: Comprehensive Production Monitoring
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Essential system check
+      - name: Detailed application status check
         run: |
-          echo "🔍 QUICK SYSTEM CHECK"
-          echo "====================="
+          echo "🔍 DETAILED APPLICATION STATUS"
+          echo "=============================="
 
-          # 1. Проверяем процессы Node.js
-          echo "1. Node.js Processes:"
-          node_count=$(ps aux | grep -c "[n]ode" || echo "0")
-          echo "   Count: $node_count"
+          # Проверяем процессы Node.js более детально
+          echo "Node.js Processes Analysis:"
+          node_processes=$(ps aux | grep -c "[n]ode" || echo "0")
+          echo "Total Node.js processes: $node_processes"
 
-          # 2. Проверяем порт 3000
-          echo "2. Port 3000 Status:"
-          if nc -z localhost 3000 2>/dev/null || curl -s --connect-timeout 2 http://localhost:3000 > /dev/null; then
-            echo "   ✅ Port 3000: OPEN"
+          if [ "$node_processes" -gt 0 ]; then
+            echo "Active Node.js processes:"
+            ps aux | grep "[n]ode" | head -10 | awk '{print "  PID: "$2", CPU: "$3"%, MEM: "$4"%, CMD: "$11$12}'
           else
-            echo "   ❌ Port 3000: CLOSED"
+            echo "❌ CRITICAL: No Node.js processes found"
+            exit 1
           fi
 
-          # 3. Проверяем системные ресурсы
-          echo "3. System Resources:"
-          echo "   Load: $(uptime | awk -F'load average:' '{print $2}' | cut -d',' -f1 | xargs)"
-          echo "   Disk: $(df -h . | awk 'NR==2 {print $4 " free"}')"
+          # Проверяем порт 3000 разными способами
+          echo "Port 3000 Detailed Check:"
+          if lsof -i :3000 > /dev/null 2>&1; then
+            echo "✅ Port 3000: OPEN (lsof)"
+            lsof -i :3000 | head -3
+          elif netstat -tuln 2>/dev/null | grep -q ":3000 "; then
+            echo "✅ Port 3000: OPEN (netstat)"
+          elif curl -s --connect-timeout 5 http://localhost:3000 > /dev/null 2>&1; then
+            echo "✅ Port 3000: HTTP RESPONSE"
+          else
+            echo "❌ CRITICAL: Port 3000 is not accessible"
+            echo "Application may be running on wrong port or not running"
+          fi
 
-          # 4. Проверяем логи на ошибки
-          echo "4. Error Check:"
-          error_count=0
-          for log in $(find . -name "*.log" -type f 2>/dev/null); do
-            errors=$(grep -c -i "error" "$log" 2>/dev/null || echo "0")
-            error_count=$((error_count + errors))
-          done
-          echo "   Errors in logs: $error_count"
+      - name: System load and resource monitoring
+        run: |
+          echo " "
+          echo "⚡ SYSTEM LOAD AND RESOURCE MONITORING"
+          echo "======================================"
+
+          # Детальная информация о нагрузке
+          echo "System Uptime and Load:"
+          uptime
 
           echo " "
-          echo "📊 SUMMARY:"
-          if [ "$node_count" -gt 0 ]; then
-            echo "✅ Application is likely running"
+          echo "Memory Usage Details:"
+          if [ "$(uname)" = "Darwin" ]; then
+            # macOS детальная информация о памяти
+            echo "Physical Memory:"
+            vm_stat | grep -E "(Pages active|Pages wired|Pages free)" | while read line; do
+              echo "  $line"
+            done
+            memory_pressure=$(memory_pressure 2>/dev/null | grep -E "System-wide memory free percentage:" || echo "")
+            if [ -n "$memory_pressure" ]; then
+              echo "  $memory_pressure"
+            fi
           else
-            echo "❌ No application processes found"
+            free -h || echo "Memory info not available"
           fi
 
+          echo " "
+          echo "Disk Usage Analysis:"
+          df -h . | while read line; do
+            echo "  $line"
+          done
+
+          echo " "
+          echo "CPU and Process Load:"
+          if [ "$(uname)" = "Darwin" ]; then
+            top -l 1 -s 0 -o cpu -n 5 -stats pid,command,cpu,mem | head -15 2>/dev/null || echo "Top command not available"
+          else
+            top -bn1 -o %CPU | head -10 2>/dev/null || echo "Top command not available"
+          fi
+
+      - name: Error analysis and log monitoring
+        run: |
+          echo " "
+          echo "📊 ERROR ANALYSIS AND LOG MONITORING"
+          echo "===================================="
+
+          # Детальный анализ ошибок в логах
+          total_errors=0
+          log_files=$(find . -name "*.log" -type f 2>/dev/null)
+
+          if [ -n "$log_files" ]; then
+            echo "Found log files:"
+            echo "$log_files"
+            echo " "
+            
+            for log_file in $log_files; do
+              echo "Analyzing $log_file:"
+              
+              # Разные типы ошибок
+              errors=$(grep -c -i "error" "$log_file" 2>/dev/null || echo "0")
+              fatal=$(grep -c -i "fatal" "$log_file" 2>/dev/null || echo "0")
+              exception=$(grep -c -i "exception" "$log_file" 2>/dev/null || echo "0")
+              warn=$(grep -c -i "warn" "$log_file" 2>/dev/null || echo "0")
+              
+              total_errors=$((total_errors + errors + fatal + exception))
+              
+              echo "  Errors: $errors, Fatal: $fatal, Exceptions: $exception, Warnings: $warn"
+              
+              # Показываем последние критические ошибки
+              if [ "$errors" -gt 0 ] || [ "$fatal" -gt 0 ]; then
+                echo "  Recent critical errors:"
+                grep -i -E "error|fatal" "$log_file" | tail -3 | sed 's/^/    /' || echo "    No recent critical errors"
+              fi
+              echo "---"
+            done
+          else
+            echo "No log files found for analysis"
+          fi
+
+          echo " "
+          echo "📈 ERROR SUMMARY:"
+          echo "Total errors across all logs: $total_errors"
+
+          # Оцениваем серьезность ситуации с ошибками
+          if [ "$total_errors" -eq 0 ]; then
+            echo "✅ ERROR STATUS: EXCELLENT - No errors found"
+          elif [ "$total_errors" -lt 5 ]; then
+            echo "⚠️  ERROR STATUS: ACCEPTABLE - Few errors detected"
+          elif [ "$total_errors" -lt 20 ]; then
+            echo "⚠️  ERROR STATUS: CONCERNING - Multiple errors detected"
+          else
+            echo "❌ ERROR STATUS: CRITICAL - High error count"
+          fi
+
+      - name: Performance and responsiveness testing
+        run: |
+          echo " "
+          echo "🚀 PERFORMANCE AND RESPONSIVENESS TESTING"
+          echo "========================================="
+
+          # Тестируем разные endpoints на производительность
+          endpoints=("/" "/health" "/api/auth/signup")
+
+          for endpoint in "${endpoints[@]}"; do
+            echo "Testing $endpoint:"
+            
+            successful_requests=0
+            total_response_time=0
+            max_response_time=0
+            min_response_time=9999
+            
+            for i in {1..5}; do
+              start_time=$(date +%s%N)
+              http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "http://localhost:3000$endpoint" 2>/dev/null || echo "000")
+              end_time=$(date +%s%N)
+              
+              if [ "$http_code" = "200" ] || [ "$http_code" = "201" ] || [ "$http_code" = "400" ]; then
+                response_time=$(( (end_time - start_time) / 1000000 ))
+                total_response_time=$((total_response_time + response_time))
+                successful_requests=$((successful_requests + 1))
+                
+                # Обновляем min/max
+                if [ "$response_time" -lt "$min_response_time" ]; then
+                  min_response_time=$response_time
+                fi
+                if [ "$response_time" -gt "$max_response_time" ]; then
+                  max_response_time=$response_time
+                fi
+                
+                echo "  Request $i: ${response_time}ms (HTTP $http_code)"
+              else
+                echo "  Request $i: FAILED (HTTP $http_code)"
+              fi
+            done
+            
+            if [ $successful_requests -gt 0 ]; then
+              avg_time=$((total_response_time / successful_requests))
+              success_rate=$((successful_requests * 100 / 5))
+              echo "  📊 $endpoint - Avg: ${avg_time}ms, Min: ${min_response_time}ms, Max: ${max_response_time}ms"
+              echo "  📈 Success rate: $success_rate% ($successful_requests/5)"
+              
+              # Оценка производительности
+              if [ "$avg_time" -lt 100 ]; then
+                echo "  ✅ PERFORMANCE: EXCELLENT"
+              elif [ "$avg_time" -lt 500 ]; then
+                echo "  ⚠️  PERFORMANCE: ACCEPTABLE"
+              else
+                echo "  ❌ PERFORMANCE: POOR"
+              fi
+            else
+              echo "  💥 $endpoint: All requests failed"
+            fi
+            echo ""
+          done
+
+      - name: Load testing and capacity check
+        run: |
+          echo " "
+          echo "🔄 LOAD TESTING AND CAPACITY CHECK"
+          echo "=================================="
+
+          echo "Testing application under load (10 concurrent requests):"
+          start_time=$(date +%s)
+
+          # Запускаем 10 фоновых запросов
+          for i in {1..10}; do
+            (curl -s --connect-timeout 10 "http://localhost:3000/" > "/dev/null" && echo "  Request $i: SUCCESS") &
+          done
+
+          # Ждем завершения и считаем время
+          wait
+          end_time=$(date +%s)
+          load_time=$((end_time - start_time))
+
+          echo "  ⏱️  Total time for 10 concurrent requests: ${load_time}s"
+
+          # Оценка способности выдерживать нагрузку
+          if [ "$load_time" -lt 5 ]; then
+            echo "  ✅ LOAD CAPACITY: EXCELLENT"
+          elif [ "$load_time" -lt 10 ]; then
+            echo "  ⚠️  LOAD CAPACITY: ACCEPTABLE"
+          else
+            echo "  ❌ LOAD CAPACITY: POOR - Application struggles under load"
+          fi
+
+      - name: Generate comprehensive monitoring report
+        run: |
+          echo " "
+          echo "📋 COMPREHENSIVE MONITORING REPORT"
+          echo "=================================="
+          echo "Monitoring completed: $(date)"
+          echo "System: $(uname -s) $(uname -m)"
+          echo " "
+
+          # Собираем ключевые метрики для итогового отчета
+          node_processes=$(ps aux | grep -c "[n]ode" || echo "0")
+          port_open=$(lsof -i :3000 > /dev/null 2>&1 && echo "YES" || echo "NO")
+
+          # Подсчет ошибок из предыдущего шага
+          total_errors=0
+          for log_file in $(find . -name "*.log" -type f 2>/dev/null); do
+            errors_in_file=$(grep -c -i "error\|fatal\|exception" "$log_file" 2>/dev/null || echo "0")
+            total_errors=$((total_errors + errors_in_file))
+          done
+
+          echo "KEY PERFORMANCE INDICATORS:"
+          echo "==========================="
+          echo "📊 Application Processes: $node_processes"
+          echo "🌐 Port 3000 Accessible: $port_open"
+          echo "❌ Total Errors in Logs: $total_errors"
+          echo "💾 Disk Free: $(df -h . | awk 'NR==2 {print $4}')"
+          echo "💻 Load Average: $(uptime | awk -F'load average:' '{print $2}' | cut -d',' -f1 | xargs)"
+          echo " "
+
+          # Итоговая оценка состояния системы
+          if [ "$node_processes" -eq 0 ]; then
+            echo "❌ OVERALL STATUS: CRITICAL - No application processes"
+            echo "💡 Recommendation: Check deployment and application startup"
+            exit 1
+          elif [ "$port_open" = "NO" ]; then
+            echo "❌ OVERALL STATUS: CRITICAL - Application not accessible on port 3000"
+            echo "💡 Recommendation: Verify application configuration and port binding"
+            exit 1
+          elif [ "$total_errors" -gt 10 ]; then
+            echo "⚠️  OVERALL STATUS: DEGRADED - High error count"
+            echo "💡 Recommendation: Investigate application errors in logs"
+          else
+            echo "✅ OVERALL STATUS: HEALTHY"
+            echo "All key indicators within acceptable ranges"
+          fi
+
+          echo " "
+          echo "RECOMMENDATIONS:"
+          echo "1. Check application logs for detailed error information"
+          echo "2. Monitor system resources regularly"
+          echo "3. Verify application configuration"
+          echo "4. Consider implementing application health checks"
   # Этап 5: Откат
   rollback:
     runs-on: self-hosted
