@@ -108,7 +108,7 @@ jobs:
 
       - name: Deploy to Railway
         run: |
-          railway up --service "jwt-auth"
+          railway up
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
