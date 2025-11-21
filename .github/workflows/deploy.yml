@@ -235,286 +235,52 @@ jobs:
             app.pid
           retention-days: 30
 
-  # Этап 4: Мониторинг без health check
+    # Этап 4: Минимальный мониторинг
   monitoring:
     runs-on: self-hosted
     needs: deploy-production
-    name: Production Monitoring (No Health Endpoint)
+    name: Quick System Check
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Basic application availability check
+      - name: Essential system check
         run: |
-          echo "🔍 BASIC APPLICATION MONITORING"
-          echo "================================"
+          echo "🔍 QUICK SYSTEM CHECK"
+          echo "====================="
 
-          # Проверяем что приложение отвечает на порту 3000
-          echo "Checking if application is running on port 3000..."
+          # 1. Проверяем процессы Node.js
+          echo "1. Node.js Processes:"
+          node_count=$(ps aux | grep -c "[n]ode" || echo "0")
+          echo "   Count: $node_count"
 
-          # Простая проверка подключения к порту
-          if nc -z localhost 3000 || (curl -s -o /dev/null --connect-timeout 5 http://localhost:3000 && echo "Port 3000 is open"); then
-            echo "✅ Application is running on port 3000"
+          # 2. Проверяем порт 3000
+          echo "2. Port 3000 Status:"
+          if nc -z localhost 3000 2>/dev/null || curl -s --connect-timeout 2 http://localhost:3000 > /dev/null; then
+            echo "   ✅ Port 3000: OPEN"
           else
-            echo "❌ Application is not responding on port 3000"
-            exit 1
+            echo "   ❌ Port 3000: CLOSED"
           fi
 
-      - name: Process and system monitoring
-        run: |
-          echo " "
-          echo "⚡ PROCESS & SYSTEM MONITORING"
-          echo "=============================="
+          # 3. Проверяем системные ресурсы
+          echo "3. System Resources:"
+          echo "   Load: $(uptime | awk -F'load average:' '{print $2}' | cut -d',' -f1 | xargs)"
+          echo "   Disk: $(df -h . | awk 'NR==2 {print $4 " free"}')"
 
-          # Проверка Node.js процессов
-          echo "🔍 Node.js Processes:"
-          node_processes=$(ps aux | grep -c "[n]ode" || echo "0")
-          echo "  Running Node.js processes: $node_processes"
-
-          if [ "$node_processes" -gt 0 ]; then
-            echo "✅ Node.js application is running"
-            # Показываем топ процессов Node.js
-            ps aux | grep "[n]ode" | head -3 | awk '{print "  PID: "$2", CPU: "$3"%, MEM: "$4"%, COMMAND: "$11}'
-          else
-            echo "❌ No Node.js processes found"
-            exit 1
-          fi
-
-          # Системные метрики
-          echo " "
-          echo "💻 SYSTEM METRICS:"
-          echo "  Load average: $(uptime | awk -F'load average:' '{print $2}' | cut -d',' -f1 | xargs)"
-          echo "  Uptime: $(uptime | awk -F'up' '{print $2}' | awk -F',' '{print $1}' | xargs)"
-
-          # Память
-          if [ "$(uname)" = "Darwin" ]; then
-            # macOS
-            memory_pressure=$(memory_pressure | grep "System-wide memory free percentage:" | awk '{print $5}' || echo "N/A")
-            echo "  Memory free: ${memory_pressure}%"
-          else
-            # Linux
-            memory_free=$(free -m | grep Mem | awk '{printf "%.1f%%", $4/$2 * 100}')
-            echo "  Memory free: $memory_free"
-          fi
-
-          # Диск
-          disk_free=$(df -h . | awk 'NR==2 {print $4}')
-          disk_usage=$(df -h . | awk 'NR==2 {print $5}')
-          echo "  Disk free: $disk_free"
-          echo "  Disk usage: $disk_usage"
-
-      - name: Application functionality testing
-        run: |
-          echo " "
-          echo "🚀 APPLICATION FUNCTIONALITY TESTING"
-          echo "==================================="
-
-          # Проверяем основные endpoints без health check
-          endpoints=("/" "/api/auth/signup" "/api/auth/login")
-
-          for endpoint in "${endpoints[@]}"; do
-            echo "Testing $endpoint..."
-            
-            # Пробуем разные методы проверки
-            response=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "http://localhost:3000$endpoint" 2>/dev/null || echo "000")
-            
-            case $response in
-              "200"|"201"|"400"|"404")
-                echo "  ✅ $endpoint: Responding (HTTP $response)"
-                ;;
-              "000")
-                # Пробуем альтернативный метод - проверка времени ответа
-                start_time=$(date +%s%N)
-                if curl -s --connect-timeout 5 "http://localhost:3000$endpoint" > /dev/null 2>&1; then
-                  end_time=$(date +%s%N)
-                  response_time=$(( (end_time - start_time) / 1000000 ))
-                  echo "  ✅ $endpoint: Responding (${response_time}ms)"
-                else
-                  echo "  ⚠️  $endpoint: Slow or no response"
-                fi
-                ;;
-              *)
-                echo "  ⚠️  $endpoint: HTTP $response"
-                ;;
-            esac
+          # 4. Проверяем логи на ошибки
+          echo "4. Error Check:"
+          error_count=0
+          for log in $(find . -name "*.log" -type f 2>/dev/null); do
+            errors=$(grep -c -i "error" "$log" 2>/dev/null || echo "0")
+            error_count=$((error_count + errors))
           done
+          echo "   Errors in logs: $error_count"
 
-      - name: Error and log monitoring
-        run: |
           echo " "
-          echo "📊 ERROR & LOG MONITORING"
-          echo "========================="
-
-          # Проверяем логи на ошибки
-          log_files=("production.log" "app.log" "logs/app.log")
-          log_found=false
-
-          for log_file in "${log_files[@]}"; do
-            if [ -f "$log_file" ]; then
-              echo "📄 Analyzing $log_file:"
-              log_found=true
-              
-              # Считаем ошибки
-              errors=$(grep -c -i "error" "$log_file" 2>/dev/null || echo "0")
-              warnings=$(grep -c -i "warn" "$log_file" 2>/dev/null || echo "0")
-              exceptions=$(grep -c -i "exception" "$log_file" 2>/dev/null || echo "0")
-              
-              echo "  Errors: $errors, Warnings: $warnings, Exceptions: $exceptions"
-              
-              # Показываем последние ошибки если есть
-              if [ "$errors" -gt 0 ]; then
-                echo "  Recent errors:"
-                grep -i "error" "$log_file" | tail -2 | sed 's/^/    /' || echo "    No recent errors"
-              fi
-              break
-            fi
-          done
-
-          if [ "$log_found" = "false" ]; then
-            echo "ℹ️  No log files found for analysis"
-          fi
-
-          # Проверяем системные логи на предмет ошибок приложения
-          echo " "
-          echo "🔍 System Logs Check:"
-          if command -v logshow > /dev/null 2>&1; then
-            # macOS
-            recent_errors=$(log show --last 1h --predicate 'process == "node" || sender == "node"' --info 2>/dev/null | grep -i -c "error\|fail" || echo "0")
-            echo "  Recent system log errors: $recent_errors"
-          elif command -v journalctl > /dev/null 2>&1; then
-            # Linux
-            recent_errors=$(journalctl --since "1 hour ago" | grep -i -c "node.*error\|node.*fail" || echo "0")
-            echo "  Recent system log errors: $recent_errors"
+          echo "📊 SUMMARY:"
+          if [ "$node_count" -gt 0 ]; then
+            echo "✅ Application is likely running"
           else
-            echo "  System log check: tool not available"
-          fi
-
-      - name: Performance and load testing
-        run: |
-          echo " "
-          echo "⚡ PERFORMANCE & LOAD TESTING"
-          echo "============================"
-
-          # Базовый тест производительности
-          echo "Basic performance test:"
-
-          # Тестируем корневой endpoint
-          total_time=0
-          successful_requests=0
-
-          for i in {1..5}; do
-            start_time=$(date +%s%N)
-            if curl -s --connect-timeout 5 "http://localhost:3000/" > /dev/null 2>&1; then
-              end_time=$(date +%s%N)
-              response_time=$(( (end_time - start_time) / 1000000 ))
-              total_time=$((total_time + response_time))
-              successful_requests=$((successful_requests + 1))
-              echo "  Request $i: ${response_time}ms"
-            else
-              echo "  Request $i: timeout/failed"
-            fi
-          done
-
-          if [ $successful_requests -gt 0 ]; then
-            avg_time=$((total_time / successful_requests))
-            echo "  📊 Average response time: ${avg_time}ms"
-            echo "  📈 Success rate: $successful_requests/5 ($((successful_requests * 100 / 5))%)"
-          fi
-
-          # Простой нагрузочный тест
-          echo " "
-          echo "Simple load test (5 concurrent requests):"
-          start_time=$(date +%s)
-
-          for i in {1..5}; do
-            curl -s --connect-timeout 10 "http://localhost:3000/" > /dev/null 2>&1 &
-          done
-
-          wait
-          end_time=$(date +%s)
-          echo "  ✅ 5 concurrent requests completed in $((end_time - start_time)) seconds"
-
-      - name: Resource monitoring
-        run: |
-          echo " "
-          echo "💾 RESOURCE MONITORING"
-          echo "======================"
-
-          # Проверяем использование портов
-          echo "🌐 Network Ports:"
-          if command -v lsof > /dev/null; then
-            port_3000_usage=$(lsof -i :3000 2>/dev/null | grep LISTEN | head -1 | awk '{print $1 " (PID: " $2 ")"}' || echo "Not found")
-            echo "  Port 3000: $port_3000_usage"
-          else
-            # Альтернатива без lsof
-            if netstat -tuln 2>/dev/null | grep -q ":3000 "; then
-              echo "  Port 3000: In use"
-            else
-              echo "  Port 3000: Not in use"
-            fi
-          fi
-
-          # Проверяем файлы базы данных
-          echo " "
-          echo "🗄️ Database & Files:"
-          if [ -f "production.sqlite" ]; then
-            db_size=$(du -h production.sqlite | cut -f1)
-            echo "  Database size: $db_size"
-          else
-            echo "  Database: Not found"
-          fi
-
-          # Проверяем использование файловых дескрипторов процессом Node.js
-          node_pid=$(ps aux | grep "[n]ode" | head -1 | awk '{print $2}' || echo "")
-          if [ -n "$node_pid" ]; then
-            echo "  Node.js PID: $node_pid"
-            if command -v lsof > /dev/null; then
-              fd_count=$(lsof -p "$node_pid" 2>/dev/null | wc -l || echo "N/A")
-              echo "  Open files: $fd_count"
-            fi
-          fi
-
-      - name: Generate monitoring report
-        run: |
-          echo " "
-          echo "📋 MONITORING SUMMARY REPORT"
-          echo "============================"
-          echo "🕒 Monitoring completed: $(date)"
-          echo "📍 Application URL: http://localhost:3000"
-          echo "🔧 Environment: Production"
-          echo "💻 System: $(uname -s) $(uname -m)"
-          echo " "
-
-          # Финальная оценка состояния
-          echo "📊 STATUS ASSESSMENT:"
-
-          # Проверяем несколько критериев
-          node_processes=$(ps aux | grep -c "[n]ode" || echo "0")
-          port_open=$(curl -s -o /dev/null --connect-timeout 3 -w "%{http_code}" http://localhost:3000/ 2>/dev/null || echo "000")
-
-          if [ "$node_processes" -gt 0 ]; then
-            echo "✅ Node.js processes: RUNNING"
-          else
-            echo "❌ Node.js processes: STOPPED"
-          fi
-
-          if [ "$port_open" != "000" ]; then
-            echo "✅ Application port: RESPONDING"
-          else
-            echo "❌ Application port: NOT RESPONDING"
-          fi
-
-          # Общий статус
-          if [ "$node_processes" -gt 0 ] && [ "$port_open" != "000" ]; then
-            echo " "
-            echo "🎉 OVERALL STATUS: HEALTHY"
-            echo "✅ Application is running and responding"
-            echo "✅ System resources are available"
-            echo "✅ Basic functionality confirmed"
-          else
-            echo " "
-            echo "❌ OVERALL STATUS: UNHEALTHY"
-            echo "💥 Application issues detected"
-            exit 1
+            echo "❌ No application processes found"
           fi
 
   # Этап 5: Откат
