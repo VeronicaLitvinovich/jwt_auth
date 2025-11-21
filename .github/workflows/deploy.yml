@@ -22,7 +22,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies once
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
+          cache: "npm"
+
+      - name: Install dependencies
         run: npm ci
 
       - name: Run security audit
@@ -34,14 +40,12 @@ jobs:
         env:
           NODE_ENV: test
 
-      - name: Upload unit test coverage and node_modules
+      - name: Upload unit test coverage
         uses: actions/upload-artifact@v4
         with:
-          name: build-artifacts
-          path: |
-            coverage/
-            node_modules/
-          retention-days: 1
+          name: unit-test-coverage
+          path: coverage/
+          retention-days: 7
 
   # Этап 2: Деплой на staging и интеграционные тесты
   deploy-staging-and-integration-tests:
