@@ -4,8 +4,8 @@ const cookieParser = require("cookie-parser");
 
 const app = express();
 
-let corsOptions = {
-  origin: "http://localhost:8081",
+const corsOptions = {
+  origin: process.env.CLIENT_URL || "http://localhost:8081",
   credentials: true
 };
 
@@ -18,9 +18,15 @@ if (process.env.NODE_ENV !== 'test') {
   const db = require("./app/models");
   const Role = db.role;
 
-  db.sequelize.sync({force: true}).then(() => {
-    console.log('Drop and Resync Database with { force: true }');
-    initial();
+  const syncOptions = process.env.NODE_ENV === 'production' 
+    ? { force: false }
+    : { force: true };
+
+  db.sequelize.sync(syncOptions).then(() => {
+    console.log(`Database synced with options:`, syncOptions);
+    if (syncOptions.force) {
+      initial();
+    }
   });
 
   function initial() {
@@ -36,7 +42,11 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 app.get("/", (req, res) => {
-  res.json({ message: "Test lab 4! Hybrid Auth" });
+  res.json({ 
+    message: "Test lab 4! Hybrid Auth",
+    environment: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString()
+  });
 });
 
 require('./app/routes/auth.routes')(app);
@@ -46,9 +56,9 @@ const PORT = process.env.PORT || 8080;
 
 if (process.env.NODE_ENV !== 'test') {
   const server = app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}.`);
+    console.log(`Server is running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
   });
   module.exports = server;
 } else {
-  module.exports = app; 
+  module.exports = app;
 }

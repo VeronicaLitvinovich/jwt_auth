@@ -1,0 +1,127 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_ENV: test
+  DB_HOST: localhost
+  DB_USER: test_admin
+  DB_PASSWORD: test_1234
+  DB_NAME: test_lab4db
+  JWT_SECRET: test-lab4-secret-key
+  CLIENT_URL: http://localhost:8081
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [16.x, 18.x]
+
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: test_admin
+          POSTGRES_PASSWORD: test_1234
+          POSTGRES_DB: test_lab4db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Wait for PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          timeout 60s bash -c 'until pg_isready -h localhost -p 5432; do sleep 2; done'
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+      - name: Run all tests with coverage
+        run: npm test -- --coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Railway CLI
+        run: |
+          npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        run: |
+          railway up --service "jwt-auth-api"
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+      - name: Verify deployment
+        run: |
+          echo "Waiting for deployment to be ready..."
+          sleep 30
+          curl -f ${{ secrets.RAILWAY_URL }} || exit 1
+
+  security-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run security audit
+        run: npm audit --audit-level moderate
+
+      - name: Run vulnerability scanner
+        uses: actions/dependency-review-action@v3
