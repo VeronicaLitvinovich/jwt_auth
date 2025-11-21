@@ -84,5 +84,5 @@ jobs:
           echo "🚀 Application successfully deployed on macOS Self-Hosted Runner"
           echo "📍 Health check: http://localhost:8080/health"
           echo "📍 API documentation: http://localhost:8080/"
-          echo "⏰ Application will run for 5 minutes..."
-          sleep 300
+          echo "⏰ Application will run for 10 seconds.."
+          sleep 10
