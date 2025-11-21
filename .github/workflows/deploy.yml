@@ -236,206 +236,206 @@ jobs:
             app.pid
           retention-days: 30
 
-# Этап 4: Расширенный мониторинг и метрики
-monitoring:
-  runs-on: self-hosted
-  needs: deploy-production
-  name: Extended Monitoring & Health Checks
-  if: github.ref == 'refs/heads/main'
-  timeout-minutes: 10
+  # Этап 4: Расширенный мониторинг и метрики
+  monitoring:
+    runs-on: self-hosted
+    needs: deploy-production
+    name: Extended Monitoring & Health Checks
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 10
 
-  steps:
-    - name: Setup monitoring tools
-      run: |
-        echo "Installing monitoring dependencies..."
-        # Установка утилит для мониторинга (если необходимо)
-        sudo apt-get update || true
-        command -v htop || sudo apt-get install -y htop || echo "htop not available"
-        command -v iostat || sudo apt-get install -y sysstat || echo "sysstat not available"
+    steps:
+      - name: Setup monitoring tools
+        run: |
+          echo "Installing monitoring dependencies..."
+          # Установка утилит для мониторинга (если необходимо)
+          sudo apt-get update || true
+          command -v htop || sudo apt-get install -y htop || echo "htop not available"
+          command -v iostat || sudo apt-get install -y sysstat || echo "sysstat not available"
 
-    - name: Extended health checks with retry
-      run: |
-        echo "Starting comprehensive health monitoring..."
-        HEALTHY=false
-        for attempt in {1..10}; do
-          echo "=== Health check $attempt ==="
-          
-          # Проверка процесса приложения
-          if ps -p $(cat app.pid 2>/dev/null) > /dev/null 2>&1; then
-            echo "✅ Application process is running (PID: $(cat app.pid))"
-          else
-            echo "❌ Application process not found"
-            break
-          fi
-
-          # Расширенная проверка health endpoint
-          response=$(curl -s -w "\n%{http_code}" http://localhost:3000/health || echo "CURL_FAILED")
-          status_code=$(echo "$response" | tail -n1)
-          body=$(echo "$response" | head -n1)
-          
-          if [ "$status_code" = "200" ]; then
-            echo "✅ Health check $attempt: PASSED (Status: $status_code)"
-            echo "Response: $body"
-            HEALTHY=true
+      - name: Extended health checks with retry
+        run: |
+          echo "Starting comprehensive health monitoring..."
+          HEALTHY=false
+          for attempt in {1..10}; do
+            echo "=== Health check $attempt ==="
             
-            # Дополнительные проверки если health endpoint работает
-            echo "=== Additional endpoint checks ==="
+            # Проверка процесса приложения
+            if ps -p $(cat app.pid 2>/dev/null) > /dev/null 2>&1; then
+              echo "✅ Application process is running (PID: $(cat app.pid))"
+            else
+              echo "❌ Application process not found"
+              break
+            fi
+
+            # Расширенная проверка health endpoint
+            response=$(curl -s -w "\n%{http_code}" http://localhost:3000/health || echo "CURL_FAILED")
+            status_code=$(echo "$response" | tail -n1)
+            body=$(echo "$response" | head -n1)
             
-            # Проверка основного endpoint
-            main_response=$(curl -s -w " HTTP %{http_code}" http://localhost:3000/)
-            echo "Main endpoint: $main_response"
+            if [ "$status_code" = "200" ]; then
+              echo "✅ Health check $attempt: PASSED (Status: $status_code)"
+              echo "Response: $body"
+              HEALTHY=true
+              
+              # Дополнительные проверки если health endpoint работает
+              echo "=== Additional endpoint checks ==="
+              
+              # Проверка основного endpoint
+              main_response=$(curl -s -w " HTTP %{http_code}" http://localhost:3000/)
+              echo "Main endpoint: $main_response"
+              
+              # Проверка времени ответа
+              echo "Response time metrics:"
+              for endpoint in "/health" "/"; do
+                start_time=$(date +%s%N)
+                curl -s -o /dev/null http://localhost:3000$endpoint
+                end_time=$(date +%s%N)
+                response_time=$(( (end_time - start_time) / 1000000 ))
+                echo "  $endpoint: ${response_time}ms"
+              done
+              break
+            else
+              echo "❌ Health check $attempt: FAILED (Status: $status_code)"
+              echo "Full response: $response"
+            fi
             
-            # Проверка времени ответа
-            echo "Response time metrics:"
-            for endpoint in "/health" "/"; do
-              start_time=$(date +%s%N)
-              curl -s -o /dev/null http://localhost:3000$endpoint
-              end_time=$(date +%s%N)
-              response_time=$(( (end_time - start_time) / 1000000 ))
-              echo "  $endpoint: ${response_time}ms"
-            done
-            break
-          else
-            echo "❌ Health check $attempt: FAILED (Status: $status_code)"
-            echo "Full response: $response"
-          fi
-          
-          if [ $attempt -lt 10 ]; then
-            echo "Waiting 30 seconds until next check..."
-            sleep 30
-          fi
-        done
-
-        if [ "$HEALTHY" = "false" ]; then
-          echo "❌ All health checks failed - application is unhealthy"
-          exit 1
-        fi
-
-    - name: System performance metrics
-      run: |
-        echo "📊 === SYSTEM PERFORMANCE METRICS ==="
-
-        # Память
-        echo "Memory Usage:"
-        free -h || echo "free command not available"
-
-        # Дисковое пространство
-        echo -e "\nDisk Usage:"
-        df -h || echo "df command not available"
-
-        # Нагрузка CPU
-        echo -e "\nCPU Load:"
-        top -bn1 | head -20 || echo "top command not available"
-
-        # I/O статистика
-        echo -e "\nI/O Statistics:"
-        iostat -x 1 1 2>/dev/null || echo "iostat not available"
-
-        # Сетевые соединения
-        echo -e "\nNetwork Connections (app related):"
-        netstat -tulpn 2>/dev/null | grep :3000 || ss -tulpn 2>/dev/null | grep :3000 || echo "netstat/ss not available"
-
-    - name: Application performance testing
-      run: |
-        echo "🚀 === APPLICATION PERFORMANCE TESTING ==="
-
-        # Тест нагрузки на health endpoint
-        echo "Load testing health endpoint (10 requests):"
-        for i in {1..10}; do
-          start=$(date +%s%N)
-          curl -s -o /dev/null http://localhost:3000/health
-          end=$(date +%s%N)
-          echo "  Request $i: $(( (end - start) / 1000000 ))ms"
-        done
-
-        # Проверка параллельных запросов
-        echo -e "\nConcurrent requests test:"
-        time (for i in {1..5}; do
-          curl -s http://localhost:3000/health > /dev/null &
-        done; wait)
-
-        # Проверка стабильности в течение времени
-        echo -e "\nStability test (30 seconds):"
-        timeout 30s bash -c '
-          while true; do
-            curl -s -o /dev/null http://localhost:3000/health
-            sleep 1
+            if [ $attempt -lt 10 ]; then
+              echo "Waiting 30 seconds until next check..."
+              sleep 30
+            fi
           done
-        ' || echo "Stability test completed"
 
-    - name: Error rate monitoring
-      run: |
-        echo "📈 === ERROR RATE MONITORING ==="
-
-        # Проверка логов на ошибки
-        if [ -f "production.log" ]; then
-          echo "Recent errors in logs:"
-          grep -i "error\|fail\|exception" production.log | tail -10 || echo "No errors found in logs"
-          
-          # Подсчет ошибок
-          error_count=$(grep -i "error\|fail\|exception" production.log | wc -l || echo "0")
-          echo "Total errors in log: $error_count"
-        else
-          echo "Log file not available for error analysis"
-        fi
-
-        # Проверка HTTP ошибок
-        echo -e "\nHTTP Error testing:"
-
-        # Тест несуществующего endpoint
-        curl -s -w "Unknown endpoint: HTTP %{http_code}\n" http://localhost:3000/nonexistent
-
-        # Тест некорректного метода
-        curl -s -X POST -w "POST to health: HTTP %{http_code}\n" http://localhost:3000/health
-
-    - name: Database and resource monitoring
-      run: |
-        echo "💾 === DATABASE & RESOURCE MONITORING ==="
-
-        # Проверка использования базы данных
-        if [ -f "production.sqlite" ]; then
-          db_size=$(du -h production.sqlite | cut -f1)
-          echo "Database size: $db_size"
-        else
-          echo "Database file not found"
-        fi
-
-        # Проверка использования памяти процессом
-        if [ -f "app.pid" ]; then
-          pid=$(cat app.pid)
-          if ps -p $pid > /dev/null; then
-            echo "Process memory usage:"
-            ps -o pid,ppid,cmd,%mem,%cpu --pid $pid || echo "Cannot get process details"
+          if [ "$HEALTHY" = "false" ]; then
+            echo "❌ All health checks failed - application is unhealthy"
+            exit 1
           fi
-        fi
 
-    - name: Generate monitoring report
-      run: |
-        echo "📋 === MONITORING SUMMARY REPORT ==="
-        echo "Deployment Time: $(date)"
-        echo "Commit: ${{ github.sha }}"
-        echo "Environment: Production"
-        echo "Application URL: http://localhost:3000"
-        echo "Health Check: http://localhost:3000/health"
+      - name: System performance metrics
+        run: |
+          echo "📊 === SYSTEM PERFORMANCE METRICS ==="
 
-        # Финальная проверка статуса
-        if curl -f http://localhost:3000/health > /dev/null 2>&1; then
-          echo "🎉 FINAL STATUS: HEALTHY"
-          echo "All systems operational"
-        else
-          echo "⚠️  FINAL STATUS: UNHEALTHY"
-          echo "Application failed final health check"
-          exit 1
-        fi
+          # Память
+          echo "Memory Usage:"
+          free -h || echo "free command not available"
 
-    - name: Upload monitoring results
-      uses: actions/upload-artifact@v4
-      with:
-        name: monitoring-results
-        path: |
-          production.log
-          app.pid
-        retention-days: 30
+          # Дисковое пространство
+          echo -e "\nDisk Usage:"
+          df -h || echo "df command not available"
+
+          # Нагрузка CPU
+          echo -e "\nCPU Load:"
+          top -bn1 | head -20 || echo "top command not available"
+
+          # I/O статистика
+          echo -e "\nI/O Statistics:"
+          iostat -x 1 1 2>/dev/null || echo "iostat not available"
+
+          # Сетевые соединения
+          echo -e "\nNetwork Connections (app related):"
+          netstat -tulpn 2>/dev/null | grep :3000 || ss -tulpn 2>/dev/null | grep :3000 || echo "netstat/ss not available"
+
+      - name: Application performance testing
+        run: |
+          echo "🚀 === APPLICATION PERFORMANCE TESTING ==="
+
+          # Тест нагрузки на health endpoint
+          echo "Load testing health endpoint (10 requests):"
+          for i in {1..10}; do
+            start=$(date +%s%N)
+            curl -s -o /dev/null http://localhost:3000/health
+            end=$(date +%s%N)
+            echo "  Request $i: $(( (end - start) / 1000000 ))ms"
+          done
+
+          # Проверка параллельных запросов
+          echo -e "\nConcurrent requests test:"
+          time (for i in {1..5}; do
+            curl -s http://localhost:3000/health > /dev/null &
+          done; wait)
+
+          # Проверка стабильности в течение времени
+          echo -e "\nStability test (30 seconds):"
+          timeout 30s bash -c '
+            while true; do
+              curl -s -o /dev/null http://localhost:3000/health
+              sleep 1
+            done
+          ' || echo "Stability test completed"
+
+      - name: Error rate monitoring
+        run: |
+          echo "📈 === ERROR RATE MONITORING ==="
+
+          # Проверка логов на ошибки
+          if [ -f "production.log" ]; then
+            echo "Recent errors in logs:"
+            grep -i "error\|fail\|exception" production.log | tail -10 || echo "No errors found in logs"
+            
+            # Подсчет ошибок
+            error_count=$(grep -i "error\|fail\|exception" production.log | wc -l || echo "0")
+            echo "Total errors in log: $error_count"
+          else
+            echo "Log file not available for error analysis"
+          fi
+
+          # Проверка HTTP ошибок
+          echo -e "\nHTTP Error testing:"
+
+          # Тест несуществующего endpoint
+          curl -s -w "Unknown endpoint: HTTP %{http_code}\n" http://localhost:3000/nonexistent
+
+          # Тест некорректного метода
+          curl -s -X POST -w "POST to health: HTTP %{http_code}\n" http://localhost:3000/health
+
+      - name: Database and resource monitoring
+        run: |
+          echo "💾 === DATABASE & RESOURCE MONITORING ==="
+
+          # Проверка использования базы данных
+          if [ -f "production.sqlite" ]; then
+            db_size=$(du -h production.sqlite | cut -f1)
+            echo "Database size: $db_size"
+          else
+            echo "Database file not found"
+          fi
+
+          # Проверка использования памяти процессом
+          if [ -f "app.pid" ]; then
+            pid=$(cat app.pid)
+            if ps -p $pid > /dev/null; then
+              echo "Process memory usage:"
+              ps -o pid,ppid,cmd,%mem,%cpu --pid $pid || echo "Cannot get process details"
+            fi
+          fi
+
+      - name: Generate monitoring report
+        run: |
+          echo "📋 === MONITORING SUMMARY REPORT ==="
+          echo "Deployment Time: $(date)"
+          echo "Commit: ${{ github.sha }}"
+          echo "Environment: Production"
+          echo "Application URL: http://localhost:3000"
+          echo "Health Check: http://localhost:3000/health"
+
+          # Финальная проверка статуса
+          if curl -f http://localhost:3000/health > /dev/null 2>&1; then
+            echo "🎉 FINAL STATUS: HEALTHY"
+            echo "All systems operational"
+          else
+            echo "⚠️  FINAL STATUS: UNHEALTHY"
+            echo "Application failed final health check"
+            exit 1
+          fi
+
+      - name: Upload monitoring results
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitoring-results
+          path: |
+            production.log
+            app.pid
+          retention-days: 30
 
   # Этап 5: Откат
   rollback:
