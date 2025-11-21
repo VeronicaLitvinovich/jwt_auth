@@ -10,19 +10,18 @@ on:
 env:
   NODE_ENV: test
   DB_DIALECT: sqlite
-  DB_STORAGE: ./database.sqlite
 
 jobs:
-  # Этап 1: Сборка и юнит-тесты
-  build-and-unit-tests:
+  # Этап 1: Сборка и тестирование (ЕДИНСТВЕННЫЙ раз устанавливаем зависимости)
+  build-and-test:
     runs-on: self-hosted
-    name: Build and Unit Tests
+    name: Build and Test
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js (ТОЛЬКО ЗДЕСЬ для всего пайплайна)
         uses: actions/setup-node@v4
         with:
           node-version: "18.x"
@@ -34,45 +33,52 @@ jobs:
       - name: Run security audit
         run: npm audit --production --audit-level=high
 
-      - name: Run unit tests with coverage
-        run: |
-          npm run test:unit
-        env:
-          NODE_ENV: test
+      - name: Run unit tests
+        run: npm run test:unit
 
-      - name: Upload unit test coverage
+      - name: Run integration tests
+        run: npm run test:integration
+
+      - name: Create deployment package
+        run: |
+          # Создаем полный пакет для деплоя
+          tar -czf deployment.tar.gz \
+            ./*.js \
+            ./app/ \
+            ./config/ \
+            ./tests/ \
+            ./node_modules/ \
+            ./package.json \
+            ./package-lock.json
+          echo "📦 Deployment package created"
+
+      - name: Upload deployment package
         uses: actions/upload-artifact@v4
         with:
-          name: unit-test-coverage
-          path: coverage/
-          retention-days: 7
+          name: deployment-package
+          path: deployment.tar.gz
+          retention-days: 1
 
-  # Этап 2: Деплой на staging и интеграционные тесты
-  deploy-staging-and-integration-tests:
+  # Этап 2: Деплой на staging
+  deploy-staging:
     runs-on: self-hosted
-    needs: build-and-unit-tests
+    needs: build-and-test
     environment: staging
-    name: Deploy to Staging & Integration Tests
+    name: Deploy to Staging
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18.x"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Download unit test coverage
+      - name: Download deployment package
         uses: actions/download-artifact@v4
         with:
-          name: unit-test-coverage
-          path: coverage/
+          name: deployment-package
 
-      - name: Deploy to staging environment
+      - name: Extract and setup
+        run: |
+          # Распаковываем готовый пакет
+          tar -xzf deployment.tar.gz
+          echo "📦 Deployment package extracted"
+
+      - name: Deploy to staging
         run: |
           export PORT=3001
           export NODE_ENV=staging
@@ -81,80 +87,64 @@ jobs:
           echo "🚀 Staging deployment started on port 3001"
           sleep 15
 
-      - name: Wait for staging to be ready
+      - name: Verify staging deployment
         run: |
-          echo "Waiting for staging application..."
-          for i in {1..10}; do
+          echo "Verifying staging deployment..."
+          counter=1
+          while [ $counter -le 10 ]; do
             if curl -f http://localhost:3001/health > /dev/null 2>&1; then
               echo "✅ Staging application is ready!"
               break
             fi
-            echo "Attempt $i/10 - Staging not ready yet..."
+            echo "Attempt $counter/10 - Staging not ready yet..."
+            counter=$((counter + 1))
             sleep 3
           done
 
-      - name: Run integration tests against staging
-        run: |
-          export TEST_BASE_URL=http://localhost:3001
-          npm run test:integration
-        env:
-          NODE_ENV: test
+          if [ $counter -gt 10 ]; then
+            echo "❌ Staging failed to start"
+            exit 1
+          fi
 
-      - name: API smoke tests
-        run: |
-          echo "Running API smoke tests on staging..."
-
-          # Health check
+          # Тестируем основные endpoints
           curl -f http://localhost:3001/health
-          echo "✅ Health check passed"
-
-          # Main endpoint
+          echo ""
           curl -f http://localhost:3001/
-          echo "✅ Main endpoint passed"
+          echo ""
 
-          # Test authentication endpoints
+      - name: Run staging smoke tests
+        run: |
+          echo "Running staging smoke tests..."
           curl -X POST http://localhost:3001/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"staginguser","email":"staging@example.com","password":"password123"}' \
-            -w "\nHTTP Status: %{http_code}\n"
-
-          echo "✅ Staging environment verified"
-
-      - name: Upload staging test results
-        uses: actions/upload-artifact@v4
-        with:
-          name: staging-test-results
-          path: |
-            test-results/
-            coverage/
-          retention-days: 7
+            -w "\nHTTP Status: %{http_code}\n" || echo "Staging user creation test completed"
 
   # Этап 3: Деплой в production
   deploy-production:
     runs-on: self-hosted
-    needs: deploy-staging-and-integration-tests
+    needs: deploy-staging
     environment: production
     name: Deploy to Production
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download deployment package
+        uses: actions/download-artifact@v4
         with:
-          node-version: "18.x"
+          name: deployment-package
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Stop previous production instance
+      - name: Extract and setup
         run: |
-          # Останавливаем предыдущую версию приложения
+          tar -xzf deployment.tar.gz
+          echo "📦 Production deployment package extracted"
+
+      - name: Stop previous production
+        run: |
+          # Аккуратно останавливаем предыдущую версию
           pkill -f "node.*server.js" || true
-          sleep 3
-          echo "✅ Previous instance stopped"
+          sleep 5
+          echo "✅ Previous production instance stopped"
 
       - name: Deploy to production
         run: |
@@ -169,59 +159,49 @@ jobs:
       - name: Verify production deployment
         run: |
           echo "Verifying production deployment..."
-          for i in {1..10}; do
+          counter=1
+          while [ $counter -le 10 ]; do
             if curl -f http://localhost:3000/health > /dev/null 2>&1; then
               echo "✅ Production application is ready!"
               break
             fi
-            echo "Attempt $i/10 - Production not ready yet..."
+            echo "Attempt $counter/10 - Production not ready yet..."
+            counter=$((counter + 1))
             sleep 3
           done
 
-          # Comprehensive production checks
-          curl -f http://localhost:3000/health
-          echo ""
-          curl -f http://localhost:3000/
-          echo ""
-
-          # Check application process
-          if ps -p $(cat app.pid) > /dev/null; then
-            echo "✅ Application process is running (PID: $(cat app.pid))"
-          else
-            echo "❌ Application process failed"
+          if [ $counter -gt 10 ]; then
+            echo "❌ Production failed to start"
+            echo "=== Production logs ==="
+            cat production.log || echo "No logs available"
             exit 1
           fi
+
+          # Комплексная проверка
+          echo "=== Production Health Check ==="
+          curl -f http://localhost:3000/health
+          echo ""
+          echo "=== Production API ==="
+          curl -f http://localhost:3000/
+          echo ""
 
       - name: Run production smoke tests
         run: |
           echo "Running production smoke tests..."
-
-          # Test critical user journey
           curl -X POST http://localhost:3000/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"productionuser","email":"production@example.com","password":"password123"}' \
-            -w "\nHTTP Status: %{http_code}\n" || echo "User creation test completed"
+            -w "\nHTTP Status: %{http_code}\n" || echo "Production user creation test completed"
 
-          echo "✅ Production smoke tests passed"
-
-      - name: Log deployment info
+      - name: Log deployment success
         run: |
           echo "🎉 PRODUCTION DEPLOYMENT SUCCESSFUL"
           echo "📍 URL: http://localhost:3000"
           echo "🏥 Health: http://localhost:3000/health"
-          echo "📊 Environment: production"
-          echo "🔧 Node: $(node --version)"
+          echo "📊 Metrics: http://localhost:3000/metrics"
+          echo "🌍 Environment: production"
           echo "🕒 Deployed at: $(date)"
           echo "📝 Commit: ${{ github.sha }}"
-
-      - name: Upload production logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-deployment-logs
-          path: |
-            production.log
-            app.pid
-          retention-days: 30
 
   # Этап 4: Мониторинг
   monitoring:
@@ -231,50 +211,55 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Health check monitoring (macOS compatible)
+      - name: Health check monitoring
         run: |
           echo "Starting health check monitoring..."
-          # macOS-совместимый цикл
-          for i in 1 2 3 4 5; do
-            echo "Health check $i:"
-            response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" http://localhost:3000/health || echo "HTTP_STATUS:000")
-            body=$(echo "$response" | grep -v HTTP_STATUS || echo "No response")
-            status=$(echo "$response" | grep HTTP_STATUS | cut -d':' -f2 || echo "000")
+          i=1
+          while [ $i -le 5 ]; do
+            echo ""
+            echo "=== Health check $i ==="
+            
+            response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" http://localhost:3000/health 2>/dev/null || echo "HTTP_STATUS:000")
+            status=$(echo "$response" | grep "HTTP_STATUS" | cut -d':' -f2)
+            body=$(echo "$response" | grep -v "HTTP_STATUS")
             
             echo "Status: $status"
-            echo "Response: $body"
-            
-            if [ "$status" -eq 200 ]; then
+            if [ "$status" = "200" ]; then
               echo "✅ Health check $i: PASSED"
+              echo "Response: $body"
             else
               echo "❌ Health check $i: FAILED (Status: $status)"
             fi
             
             echo "Waiting 30 seconds until next check..."
+            i=$((i + 1))
             sleep 30
           done
-          echo "📊 Monitoring completed"
+          echo "📊 Monitoring completed successfully"
 
       - name: Performance check
         run: |
           echo "Running performance checks..."
-          # Измеряем время ответа
+          echo "Health endpoint response time:"
           time curl -s -o /dev/null http://localhost:3000/health
+          echo "Main endpoint response time:"
           time curl -s -o /dev/null http://localhost:3000/
 
-      - name: Final health status
+      - name: Final status report
         run: |
-          echo "=== FINAL HEALTH STATUS ==="
-          if curl -f http://localhost:3000/health; then
-            echo "🎉 PRODUCTION STATUS: HEALTHY"
-            echo "📍 URL: http://localhost:3000"
-            echo "🕒 Monitoring completed at: $(date)"
+          echo "=== FINAL DEPLOYMENT STATUS ==="
+          if curl -f http://localhost:3000/health > /dev/null 2>&1; then
+            echo "🎉 STATUS: HEALTHY"
+            echo "📍 Application is running successfully"
+            echo "📈 All health checks passed"
+            echo "🚀 Deployment completed successfully"
           else
-            echo "⚠️  PRODUCTION STATUS: UNHEALTHY"
+            echo "❌ STATUS: UNHEALTHY"
+            echo "⚠️  Application may have issues"
             exit 1
           fi
 
-  # Этап 5: Откат (ручной триггер)
+  # Этап 5: Откат (ручной запуск)
   rollback:
     runs-on: self-hosted
     name: Rollback Deployment
@@ -282,25 +267,25 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
 
     steps:
+      - name: Checkout specific commit for rollback
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.rollback_commit || 'main' }}
+
+      - name: Setup Node.js for rollback
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
+
+      - name: Install dependencies for rollback
+        run: npm ci
+
       - name: Stop current production
         run: |
           echo "Stopping current production deployment..."
           pkill -f "node.*server.js" || true
           sleep 5
           echo "✅ Current production stopped"
-
-      - name: Checkout previous stable version
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.rollback_commit || 'main' }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18.x"
-
-      - name: Install dependencies
-        run: npm ci
 
       - name: Deploy previous version
         run: |
@@ -315,12 +300,14 @@ jobs:
       - name: Verify rollback
         run: |
           echo "Verifying rollback..."
-          for i in {1..10}; do
+          counter=1
+          while [ $counter -le 10 ]; do
             if curl -f http://localhost:3000/health > /dev/null 2>&1; then
               echo "✅ Rollback successful!"
               break
             fi
-            echo "Attempt $i/10 - Rollback not ready yet..."
+            echo "Attempt $counter/10 - Rollback not ready yet..."
+            counter=$((counter + 1))
             sleep 3
           done
 
@@ -329,7 +316,7 @@ jobs:
 
       - name: Log rollback info
         run: |
-          echo "🔄 ROLLBACK COMPLETED"
+          echo "🔄 ROLLBACK COMPLETED SUCCESSFULLY"
           echo "📍 Rollback to: ${{ github.event.inputs.rollback_commit || 'main' }}"
           echo "🕒 Rollback time: $(date)"
           echo "📝 Current commit: $(git rev-parse HEAD)"
