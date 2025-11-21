@@ -231,14 +231,15 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Health check monitoring
+      - name: Health check monitoring (macOS compatible)
         run: |
           echo "Starting health check monitoring..."
-          for i in {1 2 3 4 5}; do
+          # macOS-совместимый цикл
+          for i in 1 2 3 4 5; do
             echo "Health check $i:"
-            response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" http://localhost:3000/health)
-            body=$(echo "$response" | grep -v HTTP_STATUS)
-            status=$(echo "$response" | grep HTTP_STATUS | cut -d':' -f2)
+            response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" http://localhost:3000/health || echo "HTTP_STATUS:000")
+            body=$(echo "$response" | grep -v HTTP_STATUS || echo "No response")
+            status=$(echo "$response" | grep HTTP_STATUS | cut -d':' -f2 || echo "000")
             
             echo "Status: $status"
             echo "Response: $body"
@@ -246,27 +247,32 @@ jobs:
             if [ "$status" -eq 200 ]; then
               echo "✅ Health check $i: PASSED"
             else
-              echo "❌ Health check $i: FAILED"
+              echo "❌ Health check $i: FAILED (Status: $status)"
             fi
             
+            echo "Waiting 30 seconds until next check..."
             sleep 30
           done
+          echo "📊 Monitoring completed"
 
       - name: Performance check
         run: |
           echo "Running performance checks..."
-          time curl -s -o /dev/null -w "Response time: %{time_total}s\n" http://localhost:3000/health
-          time curl -s -o /dev/null -w "Response time: %{time_total}s\n" http://localhost:3000/
+          # Измеряем время ответа
+          time curl -s -o /dev/null http://localhost:3000/health
+          time curl -s -o /dev/null http://localhost:3000/
 
-      - name: System resource check
+      - name: Final health status
         run: |
-          echo "=== System Resources ==="
-          echo "Memory usage:"
-          ps aux | grep node | grep -v grep | awk '{print $4 "% memory"}'
-          echo "CPU usage:"
-          ps aux | grep node | grep -v grep | awk '{print $3 "% CPU"}'
-          echo "Disk usage:"
-          df -h . | tail -1
+          echo "=== FINAL HEALTH STATUS ==="
+          if curl -f http://localhost:3000/health; then
+            echo "🎉 PRODUCTION STATUS: HEALTHY"
+            echo "📍 URL: http://localhost:3000"
+            echo "🕒 Monitoring completed at: $(date)"
+          else
+            echo "⚠️  PRODUCTION STATUS: UNHEALTHY"
+            exit 1
+          fi
 
   # Этап 5: Откат (ручной триггер)
   rollback:
