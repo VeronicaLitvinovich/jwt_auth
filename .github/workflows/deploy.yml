@@ -49,16 +49,40 @@ jobs:
           export DB_DIALECT=sqlite
           export DB_STORAGE=./database.sqlite
           npm start &
-          sleep 10
+          echo "Application starting in background..."
+          sleep 15
 
-      - name: Test application
+      - name: Test application (macOS compatible)
         run: |
-          timeout 30s bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
-          echo "✅ Application is ready!"
+          # macOS-совместимая версия ожидания
+          echo "Waiting for application to start..."
+          for i in {1..15}; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "✅ Application is ready!"
+              break
+            fi
+            echo "Attempt $i/15 - Application not ready yet..."
+            sleep 2
+          done
+
+          # Финальная проверка
+          if curl -f http://localhost:8080/health; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Application failed to start"
+            exit 1
+          fi
+
+          # Тестируем основные endpoints
           curl http://localhost:8080/health
+          echo ""
           curl http://localhost:8080/
+          echo ""
 
       - name: Keep running
         run: |
-          echo "🚀 Self-Hosted Runner with SQLite"
+          echo "🚀 Application successfully deployed on macOS Self-Hosted Runner"
+          echo "📍 Health check: http://localhost:8080/health"
+          echo "📍 API documentation: http://localhost:8080/"
+          echo "⏰ Application will run for 5 minutes..."
           sleep 300
