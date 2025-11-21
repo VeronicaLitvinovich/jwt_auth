@@ -22,12 +22,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js (ТОЛЬКО ЗДЕСЬ для всего пайплайна)
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18.x"
-          cache: "npm"
-
       - name: Install dependencies once
         run: npm ci
 
