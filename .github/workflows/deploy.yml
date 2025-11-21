@@ -18,43 +18,14 @@ jobs:
         with:
           node-version: "18.x"
 
-      - name: Start PostgreSQL with Docker
-        run: |
-          # Останавливаем существующий контейнер если есть
-          docker stop postgres-test || true
-          docker rm postgres-test || true
-
-          # Запускаем PostgreSQL в Docker
-          docker run -d --name postgres-test \
-            -e POSTGRES_USER=test_admin \
-            -e POSTGRES_PASSWORD=test_1234 \
-            -e POSTGRES_DB=test_lab4db \
-            -p 5432:5432 \
-            postgres:13
-
-          echo "PostgreSQL started in Docker"
-
       - name: Install dependencies
         run: npm install
 
-      - name: Wait for PostgreSQL
+      - name: Run tests with SQLite
         run: |
-          # Устанавливаем только клиент PostgreSQL (быстро)
-          sudo apt-get install -y postgresql-client || true
-          timeout 60s bash -c 'until pg_isready -h localhost -p 5432; do sleep 2; done'
-          echo "✅ PostgreSQL is ready!"
-
-      - name: Run unit tests
-        run: npm run test:unit
-
-      - name: Run integration tests
-        run: npm run test:integration
-
-      - name: Cleanup PostgreSQL
-        if: always()
-        run: |
-          docker stop postgres-test || true
-          docker rm postgres-test || true
+          export DB_DIALECT=sqlite
+          export DB_STORAGE=./test.sqlite
+          npm test
 
   deploy:
     needs: test
@@ -70,42 +41,24 @@ jobs:
         with:
           node-version: "18.x"
 
-      - name: Start PostgreSQL with Docker
-        run: |
-          docker stop postgres-prod || true
-          docker rm postgres-prod || true
-
-          docker run -d --name postgres-prod \
-            -e POSTGRES_USER=test_admin \
-            -e POSTGRES_PASSWORD=test_1234 \
-            -e POSTGRES_DB=test_lab4db \
-            -p 5432:5432 \
-            postgres:13
-
       - name: Install dependencies
         run: npm install
 
-      - name: Wait for PostgreSQL
+      - name: Start application with SQLite
         run: |
-          sudo apt-get install -y postgresql-client || true
-          timeout 60s bash -c 'until pg_isready -h localhost -p 5432; do sleep 2; done'
-
-      - name: Start application
-        run: |
+          export DB_DIALECT=sqlite
+          export DB_STORAGE=./database.sqlite
           npm start &
-          echo "Application starting in background..."
-          sleep 15
+          sleep 10
 
       - name: Test application
         run: |
-          timeout 60s bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
+          timeout 30s bash -c 'until curl -f http://localhost:8080/health; do sleep 2; done'
           echo "✅ Application is ready!"
           curl http://localhost:8080/health
           curl http://localhost:8080/
 
-      - name: Keep application running
+      - name: Keep running
         run: |
-          echo "🚀 Application running on Self-Hosted Runner"
-          echo "📍 URL: http://$(hostname):8080"
-          echo "⏰ Running for 10 seconds..."
-          sleep 10
+          echo "🚀 Self-Hosted Runner with SQLite"
+          sleep 300
