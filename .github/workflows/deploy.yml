@@ -273,40 +273,50 @@ jobs:
             echo "❌ No application processes found"
           fi
           - name: Detailed Log Analysis
-      - name: Simple Load Monitoring
+      - name: Robust System Check
         run: |
-          echo "📈 SYSTEM LOAD CHECK"
-          echo "==================="
+          echo "🔍 ROBUST SYSTEM CHECK"
+          echo "======================"
 
-          # CPU load vs cores
-          load=$(uptime | awk -F'load average:' '{print $2}' | cut -d',' -f1 | xargs)
-          cores=$(nproc 2>/dev/null || echo "4")  # fallback to 4 cores
+          # Все команды с обработкой ошибок
+          set +e  # Отключаем немедленный выход при ошибках
 
-          echo "Current Load: $load"
-          echo "CPU Cores: $cores"
+          # Node.js процессы
+          NODE_COUNT=$(ps aux 2>/dev/null | grep -c "[n]ode" 2>/dev/null || echo "0")
+          echo "1. Node.js Processes: $NODE_COUNT"
 
-          # Простая оценка нагрузки
-          if [ $(echo "$load < $cores" | bc -l 2>/dev/null || echo "1") -eq 1 ]; then
-            echo "✅ System load: OPTIMAL"
-          elif [ $(echo "$load < $cores * 2" | bc -l 2>/dev/null || echo "0") -eq 1 ]; then
-            echo "⚠️ System load: MODERATE"
-          else
-            echo "❌ System load: HIGH"
-          fi
+          # Системная нагрузка
+          UPTIME_OUTPUT=$(uptime 2>/dev/null || echo "uptime not available")
+          echo "2. System Uptime: $UPTIME_OUTPUT"
 
-          # Memory usage
-          echo "Memory Usage:"
-          free -h | grep Mem | awk '{print "  Used: "$3"/"$2" ("$3/$2*100"%)"}'
+          # Дисковое пространство
+          DISK_INFO=$(df -h . 2>/dev/null | awk 'NR==2 {print $4 " free"}' || echo "disk info unavailable")
+          echo "3. Disk Space: $DISK_INFO"
 
-          # Application status
-          echo "Application Status:"
+          # Проверка портов
+          echo "4. Application Ports:"
           for port in 3000 3001; do
-            if curl -s http://localhost:$port/health > /dev/null; then
-              echo "  Port $port: ✅ RUNNING"
-            else
-              echo "  Port $port: ❌ STOPPED"
-            fi
+              if curl -f --connect-timeout 3 http://localhost:$port/health > /dev/null 2>&1; then
+                  echo "   :$port - ✅ Healthy"
+              else
+                  echo "   :$port - ❌ Unavailable"
+              fi
           done
+
+          # Подсчет ошибок
+          ERROR_TOTAL=0
+          for file in *.log; do
+              if [ -f "$file" ]; then
+                  ERRORS_IN_FILE=$(grep -c -i "error" "$file" 2>/dev/null || echo "0")
+                  ERROR_TOTAL=$((ERROR_TOTAL + ERRORS_IN_FILE))
+              fi
+          done
+          echo "5. Total Errors: $ERROR_TOTAL"
+
+          set -e  # Включаем обратно
+
+          echo " "
+          echo "📊 STATUS: $([ "$NODE_COUNT" -gt 0 ] && echo "✅ OPERATIONAL" || echo "⚠️  CHECK REQUIRED")"
 
   # Этап 4: Откат
   rollback:
