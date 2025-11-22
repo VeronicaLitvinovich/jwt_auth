@@ -9,7 +9,8 @@
     "test": "NODE_ENV=test jest --verbose --detectOpenHandles",
     "test:unit": "NODE_ENV=test jest tests/unit --verbose --coverage --detectOpenHandles",
     "test:integration": "NODE_ENV=test jest tests/integration --verbose --coverage --detectOpenHandles",
-    "test:watch": "NODE_ENV=test jest --watch --detectOpenHandles"
+    "test:watch": "NODE_ENV=test jest --watch --detectOpenHandles",
+    "start:test": "NODE_ENV=test PORT=8080 DB_STORAGE=./test.sqlite node server.js"
   },
   "keywords": [
     "authentication",
