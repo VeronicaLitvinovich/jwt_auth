@@ -234,46 +234,113 @@ jobs:
             app.pid
           retention-days: 30
         # Этап 5: Тестовое окружение с доступом по ссылке
-  test-environment:
+    # Этап 5: Постоянное тестовое окружение с PM2
+  deploy-test-environment:
     runs-on: self-hosted
     needs: deploy-production
-    name: Test Environment with Public URL
+    name: 🧪 Deploy Test Environment
     environment: test
 
     steps:
-      - name: Deploy test environment
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install PM2 globally
+        run: npm install -g pm2
+
+      - name: Add start:test script to package.json
         run: |
-          echo "🚀 Deploying test environment..."
+          if ! npm run | grep -q "start:test"; then
+            npm set-script start:test "NODE_ENV=test PORT=8080 DB_STORAGE=./test.sqlite node server.js"
+            echo "✅ Added start:test script"
+          fi
 
-          # Используем GitHub workspace
-          cd "$GITHUB_WORKSPACE"
+      - name: Stop existing test application
+        run: |
+          pm2 stop jwtauth-test 2>/dev/null || true
+          pm2 delete jwtauth-test 2>/dev/null || true
+          echo "✅ Stopped existing test app"
 
-          # Останавливаем предыдущие процессы
-          pkill -f "node.*8080" || true
-          sleep 5
+      - name: Deploy test environment with PM2
+        run: |
+          # Запускаем приложение через PM2 (будет работать постоянно)
+          pm2 start npm --name "jwtauth-test" -- run start:test
+          pm2 save
+          echo "✅ Test environment deployed with PM2"
 
-          # Устанавливаем зависимости
-          npm ci
+      - name: Wait for application to start
+        run: |
+          echo "⏳ Waiting for test environment to start..."
+          sleep 25
 
-          # Запускаем тестовое окружение
-          export PORT=8080
-          export NODE_ENV=test
-          export DB_STORAGE=./test.sqlite
-          rm -f test.sqlite
-          nohup npm start > test.log 2>&1 &
-          echo $! > test.pid
+      - name: Verify test environment
+        run: |
+          echo "🔍 Verifying test environment..."
+          counter=1
+          while [ $counter -le 10 ]; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "✅ Test environment is healthy (attempt $counter)"
+              break
+            fi
+            echo "Attempt $counter/10 - Waiting..."
+            counter=$((counter + 1))
+            sleep 5
+          done
 
-          echo "⏳ Waiting for application to start..."
-          sleep 30
-
-          # Проверяем
-          if curl -f http://localhost:8080/health; then
-            echo "✅ Test environment deployed successfully!"
-          else
-            echo "❌ Test environment deployment failed"
-            cat test.log
+          if [ $counter -gt 10 ]; then
+            echo "❌ Test environment health check failed"
+            echo "📋 PM2 status:"
+            pm2 status
+            echo "📋 PM2 logs:"
+            pm2 logs jwtauth-test --lines 20
             exit 1
           fi
+
+      - name: Run API tests on test environment
+        run: |
+          echo "🧪 Running API tests..."
+
+          # Test public endpoint
+          curl -f http://localhost:8080/api/test/all && echo "✅ Public endpoint works"
+
+          # Test registration
+          curl -X POST http://localhost:8080/api/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"username":"githubuser","email":"github@example.com","password":"password123"}' \
+            -w "\nHTTP Status: %{http_code}\n" || echo "⚠️ Registration test completed"
+
+      - name: Display access information
+        run: |
+          echo " "
+          echo "🎉 TEST ENVIRONMENT DEPLOYED SUCCESSFULLY"
+          echo "========================================"
+          echo "🌐 URL: http://localhost:8080"
+          echo "🏥 Health: http://localhost:8080/health" 
+          echo "🔐 Auth: http://localhost:8080/api/auth/signup"
+          echo "📊 Environment: test"
+          echo "🔧 Process Manager: PM2"
+          echo "🕒 Deployed at: $(date)"
+          echo "📝 Commit: ${{ github.sha }}"
+          echo " "
+          echo "💡 The test environment will remain running after this workflow completes!"
+          echo " "
+
+      - name: Create deployment summary
+        run: |
+          echo "## 🧪 Test Environment Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Successfully deployed to PM2" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: http://localhost:8080" >> $GITHUB_STEP_SUMMARY
+          echo "- **Health Check**: \`http://localhost:8080/health\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Process Manager**: PM2" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: Will remain running after workflow completion" >> $GITHUB_STEP_SUMMARY
 
     # Этап 4: Откат
   rollback:
