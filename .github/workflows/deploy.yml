@@ -366,7 +366,7 @@ jobs:
     steps:
       - name: Auto-deploy test environment
         run: |
-          cd /Users/veronikalitvinovic/actions-runner/_work/JWT-AUTH/JWT-AUTH
+          cd /Users/veronikalitvinovic/actions-runner/_work/jwt-auth/jwt-auth
           ./start-test-env.sh
 
     # Этап 4: Откат
