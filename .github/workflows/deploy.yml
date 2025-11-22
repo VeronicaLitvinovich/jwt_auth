@@ -356,6 +356,19 @@ jobs:
           echo "🕒 Deployed at: $(date)"
           echo "📝 Commit: ${{ github.sha }}"
 
+    # Автоматический запуск тестового окружения после продакшн
+  auto-test-environment:
+    runs-on: self-hosted
+    needs: deploy-production
+    name: Auto Test Environment
+    if: always() && needs.deploy-production.result == 'success'
+
+    steps:
+      - name: Auto-deploy test environment
+        run: |
+          cd /Users/veronikalitvinovic/actions-runner/_work/JWT-AUTH/JWT-AUTH
+          ./start-test-env.sh
+
     # Этап 4: Откат
   rollback:
     runs-on: self-hosted
