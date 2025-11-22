@@ -79,7 +79,7 @@ jobs:
           echo "🚀 Staging deployment started on port 3001"
           sleep 15
 
-      - name: Wait for staging to be ready (macOS compatible)
+      - name: Wait for staging to be ready
         run: |
           echo "Waiting for staging application..."
           counter=1
@@ -274,8 +274,27 @@ jobs:
           else
             echo "❌ No application processes found"
           fi
+          - name: Detailed Log Analysis
+      - name: Detailed Log Analysis
+        run: |
+          echo "🔍 DETAILED LOG INSPECTION"
+          echo "=========================="
 
-  # Этап 5: Откат
+          # Check production logs
+          if [ -f "production.log" ]; then
+            echo "Production Log Analysis:"
+            grep -c -i "error" production.log | xargs echo "  Total errors:"
+            echo "  Recent error lines:"
+            grep -i "error" production.log | tail -3 | sed 's/^/    /'
+          fi
+
+          # Check for any other log files
+          find . -name "*.log" ! -name "production.log" -type f | while read log; do
+            echo "Found: $log"
+            grep -c -i "error" "$log" | xargs echo "  Errors:"
+          done
+
+  # Этап 4: Откат
   rollback:
     runs-on: self-hosted
     name: Rollback Deployment
