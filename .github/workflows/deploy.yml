@@ -18,11 +18,10 @@ env:
   DB_DIALECT: sqlite
 
 jobs:
-  # Этап 1: Сборка и юнит-тесты
-  build-and-unit-tests:
+  # Этап 1: Юнит-тесты
+  unit-tests:
     runs-on: self-hosted
-    name: Build and Unit Tests
-
+    name: 🧪 Unit Tests
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -51,12 +50,91 @@ jobs:
           path: coverage/
           retention-days: 7
 
-  # Этап 2: Деплой на staging и интеграционные тесты
-  deploy-staging-and-integration-tests:
+  # Этап 2: Деплой тестового окружения
+  deploy-test-environment:
     runs-on: self-hosted
-    needs: build-and-unit-tests
-    environment: staging
-    name: Deploy to Staging & Integration Tests
+    needs: unit-tests
+    name: 🚀 Deploy Test Environment
+    environment: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install PM2 globally
+        run: npm install -g pm2
+
+      - name: Add start:test script to package.json
+        run: |
+          npm pkg set scripts.start:test="NODE_ENV=test PORT=8080 DB_STORAGE=./test.sqlite node server.js"
+          echo "✅ Added start:test script"
+
+      - name: Stop existing test application
+        run: |
+          pm2 stop jwtauth-test 2>/dev/null || true
+          pm2 delete jwtauth-test 2>/dev/null || true
+          echo "✅ Stopped existing test app"
+
+      - name: Clean test database
+        run: |
+          rm -f test.sqlite
+          echo "✅ Cleaned test database"
+
+      - name: Deploy test environment with PM2
+        run: |
+          pm2 start npm --name "jwtauth-test" -- run start:test
+          pm2 save
+          echo "✅ Test environment deployed with PM2 on port 8080"
+
+      - name: Wait for application to start
+        run: |
+          echo "⏳ Waiting for test environment to start..."
+          sleep 25
+
+      - name: Verify test environment
+        run: |
+          echo "🔍 Verifying test environment..."
+          counter=1
+          while [ $counter -le 10 ]; do
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+              echo "✅ Test environment is healthy (attempt $counter)"
+              break
+            fi
+            echo "Attempt $counter/10 - Waiting..."
+            counter=$((counter + 1))
+            sleep 5
+          done
+
+          if [ $counter -gt 10 ]; then
+            echo "❌ Test environment health check failed"
+            echo "📋 PM2 status:"
+            pm2 status
+            echo "📋 PM2 logs:"
+            pm2 logs jwtauth-test --lines 20
+            exit 1
+          fi
+
+      - name: Basic API smoke tests
+        run: |
+          echo "🔍 Running basic API smoke tests..."
+          curl -f http://localhost:8080/health && echo "✅ Health check passed"
+          curl -f http://localhost:8080/api/test/all && echo "✅ Public endpoint works"
+          echo "✅ Test environment is ready for integration tests"
+
+  # Этап 3: Интеграционные тесты на тестовом окружении
+  integration-tests:
+    runs-on: self-hosted
+    needs: deploy-test-environment
+    name: 🔗 Integration Tests
+    environment: test
 
     steps:
       - name: Checkout code
@@ -76,76 +154,55 @@ jobs:
           name: unit-test-coverage
           path: coverage/
 
-      - name: Deploy to staging environment
+      - name: Run integration tests against test environment
         run: |
-          export PORT=3001
-          export NODE_ENV=staging
-          export DB_STORAGE=./staging.sqlite
-          npm start &
-          echo "🚀 Staging deployment started on port 3001"
-          sleep 15
-
-      - name: Wait for staging to be ready
-        run: |
-          echo "Waiting for staging application..."
-          counter=1
-          while [ $counter -le 10 ]; do
-            if curl -f http://localhost:3001/health > /dev/null 2>&1; then
-              echo "✅ Staging application is ready!"
-              break
-            fi
-            echo "Attempt $counter/10 - Staging not ready yet..."
-            counter=$((counter + 1))
-            sleep 3
-          done
-
-          if [ $counter -gt 10 ]; then
-            echo "❌ Staging failed to start"
-            exit 1
-          fi
-
-      - name: Run integration tests against staging
-        run: |
-          export TEST_BASE_URL=http://localhost:3001
+          export TEST_BASE_URL=http://localhost:8080
           npm run test:integration
         env:
           NODE_ENV: test
 
-      - name: API smoke tests
+      - name: API integration tests
         run: |
-          echo "Running API smoke tests on staging..."
+          echo "🧪 Running API integration tests on test environment..."
 
-          # Health check
-          curl -f http://localhost:3001/health
+          # Comprehensive health check
+          curl -f http://localhost:8080/health
           echo "✅ Health check passed"
 
-          # Main endpoint
-          curl -f http://localhost:3001/
+          # Test main endpoints
+          curl -f http://localhost:8080/
           echo "✅ Main endpoint passed"
 
-          # Test authentication endpoints
-          curl -X POST http://localhost:3001/api/auth/signup \
+          # Test authentication flow
+          echo "Testing authentication endpoints..."
+          curl -X POST http://localhost:8080/api/auth/signup \
             -H "Content-Type: application/json" \
-            -d '{"username":"staginguser","email":"staging@example.com","password":"password123"}' \
+            -d '{"username":"integrationuser","email":"integration@example.com","password":"password123"}' \
             -w "\nHTTP Status: %{http_code}\n" || echo "User creation test completed"
 
-          echo "✅ Staging environment verified"
+          # Test protected endpoints (if authentication works)
+          curl -X POST http://localhost:8080/api/auth/signin \
+            -H "Content-Type: application/json" \
+            -d '{"username":"integrationuser","password":"password123"}' \
+            -w "\nHTTP Status: %{http_code}\n" || echo "User login test completed"
 
-      - name: Upload staging test results
+          echo "✅ Integration tests completed"
+
+      - name: Upload integration test results
         uses: actions/upload-artifact@v4
         with:
-          name: staging-test-results
+          name: integration-test-results
           path: |
             test-results/
             coverage/
           retention-days: 7
 
-  # Этап 3: Деплой в production с PM2
+  # Этап 4: Деплой в production с PM2
   deploy-production:
     runs-on: self-hosted
-    needs: deploy-staging-and-integration-tests
+    needs: integration-tests
     environment: production
-    name: Deploy to Production
+    name: 🚀 Deploy to Production
     if: github.ref == 'refs/heads/main'
 
     steps:
@@ -165,7 +222,6 @@ jobs:
 
       - name: Add start:production script to package.json
         run: |
-          # Используем npm pkg set для добавления скрипта
           npm pkg set scripts.start:production="NODE_ENV=production PORT=3000 DB_STORAGE=./production.sqlite node server.js"
           echo "✅ Added start:production script"
 
@@ -234,138 +290,30 @@ jobs:
           echo "🕒 Deployed at: $(date)"
           echo "📝 Commit: ${{ github.sha }}"
 
-      - name: Upload production logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-deployment-logs
-          path: |
-            production.log
-          retention-days: 30
-
-  # Этап 4: Постоянное тестовое окружение с PM2
-  deploy-test-environment:
-    runs-on: self-hosted
-    needs: deploy-production
-    name: 🧪 Deploy Test Environment
-    environment: test
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18.x"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install PM2 globally
-        run: npm install -g pm2
-
-      - name: Add start:test script to package.json
+      - name: Create final summary
         run: |
-          npm pkg set scripts.start:test="NODE_ENV=test PORT=8080 DB_STORAGE=./test.sqlite node server.js"
-          echo "✅ Added start:test script"
-
-      - name: Stop existing test application
-        run: |
-          pm2 stop jwtauth-test 2>/dev/null || true
-          pm2 delete jwtauth-test 2>/dev/null || true
-          echo "✅ Stopped existing test app"
-
-      - name: Clean test database
-        run: |
-          rm -f test.sqlite
-          echo "✅ Cleaned test database"
-
-      - name: Deploy test environment with PM2
-        run: |
-          pm2 start npm --name "jwtauth-test" -- run start:test
-          pm2 save
-          echo "✅ Test environment deployed with PM2 on port 8080"
-
-      - name: Wait for application to start
-        run: |
-          echo "⏳ Waiting for test environment to start..."
-          sleep 25
-
-      - name: Verify test environment
-        run: |
-          echo "🔍 Verifying test environment..."
-          counter=1
-          while [ $counter -le 10 ]; do
-            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
-              echo "✅ Test environment is healthy (attempt $counter)"
-              break
-            fi
-            echo "Attempt $counter/10 - Waiting..."
-            counter=$((counter + 1))
-            sleep 5
-          done
-
-          if [ $counter -gt 10 ]; then
-            echo "❌ Test environment health check failed"
-            echo "📋 PM2 status:"
-            pm2 status
-            echo "📋 PM2 logs:"
-            pm2 logs jwtauth-test --lines 20
-            exit 1
-          fi
-
-      - name: Run API tests on test environment
-        run: |
-          echo "🧪 Running API tests..."
-
-          # Test public endpoint
-          curl -f http://localhost:8080/api/test/all && echo "✅ Public endpoint works"
-
-          # Test registration
-          curl -X POST http://localhost:8080/api/auth/signup \
-            -H "Content-Type: application/json" \
-            -d '{"username":"githubuser","email":"github@example.com","password":"password123"}' \
-            -w "\nHTTP Status: %{http_code}\n" || echo "⚠️ Registration test completed"
-
-      - name: Display access information
-        run: |
-          echo " "
-          echo "🎉 DUAL ENVIRONMENT DEPLOYMENT SUCCESSFUL"
-          echo "========================================"
-          echo "🚀 PRODUCTION: http://localhost:3000"
-          echo "🏥 Health: http://localhost:3000/health"
-          echo " "
-          echo "🧪 TEST: http://localhost:8080"
-          echo "🏥 Health: http://localhost:8080/health"
-          echo " "
-          echo "🔧 PM2 Status:"
-          pm2 status
-          echo " "
-          echo "💡 Both servers will remain running after workflow completion!"
-          echo " "
-
-      - name: Create deployment summary
-        run: |
-          echo "## 🎉 Dual Environment Deployment" >> $GITHUB_STEP_SUMMARY
-          echo "### ✅ Both servers deployed successfully with PM2" >> $GITHUB_STEP_SUMMARY
+          echo "## 🎉 CI/CD Pipeline Completed Successfully" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 🚀 Production Environment" >> $GITHUB_STEP_SUMMARY
-          echo "- **URL**: http://localhost:3000" >> $GITHUB_STEP_SUMMARY
-          echo "- **Health Check**: \`http://localhost:3000/health\`" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ All Stages Passed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 🧪 Test Environment" >> $GITHUB_STEP_SUMMARY
-          echo "- **URL**: http://localhost:8080" >> $GITHUB_STEP_SUMMARY
-          echo "- **Health Check**: \`http://localhost:8080/health\`" >> $GITHUB_STEP_SUMMARY
+          echo "#### 📋 Execution Order:" >> $GITHUB_STEP_SUMMARY
+          echo "1. **🧪 Unit Tests** - Code validation" >> $GITHUB_STEP_SUMMARY
+          echo "2. **🚀 Test Environment** - Deployment to test" >> $GITHUB_STEP_SUMMARY  
+          echo "3. **🔗 Integration Tests** - API testing on test environment" >> $GITHUB_STEP_SUMMARY
+          echo "4. **🚀 Production** - Deployment to production" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 🔧 Process Management" >> $GITHUB_STEP_SUMMARY
+          echo "#### 🌐 Available Environments:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Production**: http://localhost:3000" >> $GITHUB_STEP_SUMMARY
+          echo "- **Test**: http://localhost:8080" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 🔧 Process Management:" >> $GITHUB_STEP_SUMMARY
           echo "- **Manager**: PM2" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: Both servers will remain running" >> $GITHUB_STEP_SUMMARY
-          echo "- **Auto-restart**: Enabled" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: Both servers running persistently" >> $GITHUB_STEP_SUMMARY
 
   # Этап 5: Откат с PM2
   rollback:
     runs-on: self-hosted
-    name: Rollback Deployment
+    name: 🔄 Rollback Deployment
     environment: production
     if: github.event_name == 'workflow_dispatch'
 
