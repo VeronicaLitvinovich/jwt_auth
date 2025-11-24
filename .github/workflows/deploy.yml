@@ -6,12 +6,19 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      rollback_commit:
+        description: "Commit hash to rollback to"
+        required: false
+        type: string
+        default: "main"
 
 env:
   NODE_ENV: test
   DB_DIALECT: sqlite
 
 jobs:
+  # Этап 1: Сборка и юнит-тесты
   build-and-unit-tests:
     runs-on: self-hosted
     name: Build and Unit Tests
@@ -133,7 +140,7 @@ jobs:
             coverage/
           retention-days: 7
 
-  # Этап 3: Деплой в production
+  # Этап 3: Деплой в production с PM2
   deploy-production:
     runs-on: self-hosted
     needs: deploy-staging-and-integration-tests
@@ -153,22 +160,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install PM2 globally
+        run: npm install -g pm2
+
+      - name: Add start:production script to package.json
+        run: |
+          # Используем npm pkg set для добавления скрипта
+          npm pkg set scripts.start:production="NODE_ENV=production PORT=3000 DB_STORAGE=./production.sqlite node server.js"
+          echo "✅ Added start:production script"
+
       - name: Stop previous production instance
         run: |
-          # Останавливаем предыдущую версию приложения
-          pkill -f "node.*server.js" || true
-          sleep 3
-          echo "✅ Previous instance stopped"
+          pm2 stop jwtauth-production 2>/dev/null || true
+          pm2 delete jwtauth-production 2>/dev/null || true
+          echo "✅ Previous production instance stopped"
 
-      - name: Deploy to production
+      - name: Clean production database
         run: |
-          export PORT=3000
-          export NODE_ENV=production
-          export DB_STORAGE=./production.sqlite
-          nohup npm start > production.log 2>&1 &
-          echo $! > app.pid
-          echo "🚀 Production deployment started on port 3000"
-          sleep 20
+          rm -f production.sqlite
+          echo "✅ Cleaned production database"
+
+      - name: Deploy to production with PM2
+        run: |
+          pm2 start npm --name "jwtauth-production" -- run start:production
+          pm2 save
+          echo "🚀 Production deployment started with PM2 on port 3000"
 
       - name: Verify production deployment
         run: |
@@ -186,33 +202,25 @@ jobs:
 
           if [ $counter -gt 10 ]; then
             echo "❌ Production failed to start"
+            echo "📋 PM2 status:"
+            pm2 status
+            echo "📋 PM2 logs:"
+            pm2 logs jwtauth-production --lines 20
             exit 1
           fi
 
-          # Comprehensive production checks
           curl -f http://localhost:3000/health
           echo ""
           curl -f http://localhost:3000/
           echo ""
 
-          # Check application process
-          if ps -p $(cat app.pid) > /dev/null; then
-            echo "✅ Application process is running (PID: $(cat app.pid))"
-          else
-            echo "❌ Application process failed"
-            exit 1
-          fi
-
       - name: Run production smoke tests
         run: |
           echo "Running production smoke tests..."
-
-          # Test critical user journey
           curl -X POST http://localhost:3000/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"productionuser","email":"production@example.com","password":"password123"}' \
             -w "\nHTTP Status: %{http_code}\n" || echo "User creation test completed"
-
           echo "✅ Production smoke tests passed"
 
       - name: Log deployment info
@@ -222,6 +230,7 @@ jobs:
           echo "🏥 Health: http://localhost:3000/health"
           echo "📊 Environment: production"
           echo "🔧 Node: $(node --version)"
+          echo "🔧 PM2: $(pm2 --version)"
           echo "🕒 Deployed at: $(date)"
           echo "📝 Commit: ${{ github.sha }}"
 
@@ -231,10 +240,9 @@ jobs:
           name: production-deployment-logs
           path: |
             production.log
-            app.pid
           retention-days: 30
-        # Этап 5: Тестовое окружение с доступом по ссылке
-    # Этап 5: Постоянное тестовое окружение с PM2
+
+  # Этап 4: Постоянное тестовое окружение с PM2
   deploy-test-environment:
     runs-on: self-hosted
     needs: deploy-production
@@ -258,10 +266,8 @@ jobs:
 
       - name: Add start:test script to package.json
         run: |
-          if ! npm run | grep -q "start:test"; then
-            npm set-script start:test "NODE_ENV=test PORT=8080 DB_STORAGE=./test.sqlite node server.js"
-            echo "✅ Added start:test script"
-          fi
+          npm pkg set scripts.start:test="NODE_ENV=test PORT=8080 DB_STORAGE=./test.sqlite node server.js"
+          echo "✅ Added start:test script"
 
       - name: Stop existing test application
         run: |
@@ -269,12 +275,16 @@ jobs:
           pm2 delete jwtauth-test 2>/dev/null || true
           echo "✅ Stopped existing test app"
 
+      - name: Clean test database
+        run: |
+          rm -f test.sqlite
+          echo "✅ Cleaned test database"
+
       - name: Deploy test environment with PM2
         run: |
-          # Запускаем приложение через PM2 (будет работать постоянно)
           pm2 start npm --name "jwtauth-test" -- run start:test
           pm2 save
-          echo "✅ Test environment deployed with PM2"
+          echo "✅ Test environment deployed with PM2 on port 8080"
 
       - name: Wait for application to start
         run: |
@@ -320,29 +330,39 @@ jobs:
       - name: Display access information
         run: |
           echo " "
-          echo "🎉 TEST ENVIRONMENT DEPLOYED SUCCESSFULLY"
+          echo "🎉 DUAL ENVIRONMENT DEPLOYMENT SUCCESSFUL"
           echo "========================================"
-          echo "🌐 URL: http://localhost:8080"
-          echo "🏥 Health: http://localhost:8080/health" 
-          echo "🔐 Auth: http://localhost:8080/api/auth/signup"
-          echo "📊 Environment: test"
-          echo "🔧 Process Manager: PM2"
-          echo "🕒 Deployed at: $(date)"
-          echo "📝 Commit: ${{ github.sha }}"
+          echo "🚀 PRODUCTION: http://localhost:3000"
+          echo "🏥 Health: http://localhost:3000/health"
           echo " "
-          echo "💡 The test environment will remain running after this workflow completes!"
+          echo "🧪 TEST: http://localhost:8080"
+          echo "🏥 Health: http://localhost:8080/health"
+          echo " "
+          echo "🔧 PM2 Status:"
+          pm2 status
+          echo " "
+          echo "💡 Both servers will remain running after workflow completion!"
           echo " "
 
       - name: Create deployment summary
         run: |
-          echo "## 🧪 Test Environment Deployed" >> $GITHUB_STEP_SUMMARY
-          echo "### ✅ Successfully deployed to PM2" >> $GITHUB_STEP_SUMMARY
+          echo "## 🎉 Dual Environment Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Both servers deployed successfully with PM2" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 🚀 Production Environment" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: http://localhost:3000" >> $GITHUB_STEP_SUMMARY
+          echo "- **Health Check**: \`http://localhost:3000/health\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 🧪 Test Environment" >> $GITHUB_STEP_SUMMARY
           echo "- **URL**: http://localhost:8080" >> $GITHUB_STEP_SUMMARY
           echo "- **Health Check**: \`http://localhost:8080/health\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Process Manager**: PM2" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: Will remain running after workflow completion" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 🔧 Process Management" >> $GITHUB_STEP_SUMMARY
+          echo "- **Manager**: PM2" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: Both servers will remain running" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auto-restart**: Enabled" >> $GITHUB_STEP_SUMMARY
 
-    # Этап 4: Откат
+  # Этап 5: Откат с PM2
   rollback:
     runs-on: self-hosted
     name: Rollback Deployment
@@ -352,9 +372,8 @@ jobs:
     steps:
       - name: Stop current production
         run: |
-          echo "Stopping current production deployment..."
-          pkill -f "node.*server.js" || true
-          sleep 5
+          pm2 stop jwtauth-production 2>/dev/null || true
+          pm2 delete jwtauth-production 2>/dev/null || true
           echo "✅ Current production stopped"
 
       - name: Checkout previous stable version
@@ -370,15 +389,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Deploy previous version
+      - name: Install PM2 globally
+        run: npm install -g pm2
+
+      - name: Deploy previous version with PM2
         run: |
-          export PORT=3000
-          export NODE_ENV=production
-          export DB_STORAGE=./production.sqlite
-          nohup npm start > rollback.log 2>&1 &
-          echo $! > rollback.pid
-          echo "🔄 Rollback deployment started"
-          sleep 20
+          pm2 start npm --name "jwtauth-production" -- run start:production
+          pm2 save
+          echo "🔄 Rollback deployment started with PM2"
 
       - name: Verify rollback
         run: |
