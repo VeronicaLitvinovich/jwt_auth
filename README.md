@@ -9,3 +9,6 @@ docker-compose up --build
 (POST)http://localhost:8080/api/auth/signup
 
 (POST)http://localhost:8080/api/auth/signin
+
+cd /Users/veronikalitvinovic/actions-runner
+./run.sh
