@@ -213,6 +213,30 @@ jobs:
             test-results/
             coverage/
           retention-days: 7
+      - name: Run basic API tests
+        env:
+          NODE_ENV: test
+          TEST_BASE_URL: http://localhost:8080
+        run: |
+          echo "Running basic API tests..."
+          npm run test:integration:basic
+
+      - name: Debug API responses
+        run: |
+          echo "🔍 Debugging API responses..."
+          echo "Health endpoint:"
+          curl -s http://localhost:8080/health | jq . || curl -s http://localhost:8080/health
+          echo ""
+          echo "Public endpoint:"
+          curl -s http://localhost:8080/api/test/all | jq . || curl -s http://localhost:8080/api/test/all
+          echo ""
+          echo "Testing registration:"
+          curl -s -X POST http://localhost:8080/api/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"username":"debuguser","email":"debug@example.com","password":"password123"}' | jq . || \
+          curl -s -X POST http://localhost:8080/api/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"username":"debuguser","email":"debug@example.com","password":"password123"}'
 
   # Этап 4: Деплой в production
   deploy-production:
