@@ -133,32 +133,22 @@ jobs:
           name: unit-test-coverage
           path: coverage/
 
-      - name: Run integration tests against test environment
+      - name: Wait for Docker application to be ready
+        run: |
+          echo "Waiting for Docker application to be ready..."
+          until curl -s http://localhost:8080/health > /dev/null; do
+            echo "Waiting for app to be ready..."
+            sleep 5
+          done
+          echo "✅ Docker app is ready for testing"
+
+      - name: Run integration tests against Docker environment
         env:
           NODE_ENV: test
           TEST_BASE_URL: http://localhost:8080
         run: |
           echo "Using TEST_BASE_URL=$TEST_BASE_URL"
           npm run test:integration
-
-      - name: API integration additional checks
-        run: |
-          echo "🧪 Running API integration extra checks..."
-          curl -fsS http://localhost:8080/health || (echo "health endpoint failed" && exit 1)
-
-          # Главная страница / не обязана существовать → пропускаем проверку
-          echo "ℹ️ Skipping / endpoint check (not required)"
-
-          echo "Testing signup/login flow (best-effort)"
-          curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/api/auth/signup \
-            -H "Content-Type: application/json" \
-            -d '{"username":"integrationuser","email":"integration@example.com","password":"password123"}' || true
-
-          curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8080/api/auth/signin \
-            -H "Content-Type: application/json" \
-            -d '{"username":"integrationuser","password":"password123"}' || true
-
-          echo "✅ Integration additional checks completed"
 
       - name: Upload integration test results
         uses: actions/upload-artifact@v4
@@ -168,13 +158,6 @@ jobs:
             test-results/
             coverage/
           retention-days: 7
-
-      - name: Cleanup test PM2 (always)
-        if: always()
-        run: |
-          pm2 stop jwtauth-test 2>/dev/null || true
-          pm2 delete jwtauth-test 2>/dev/null || true
-          echo "✅ Cleaned up jwtauth-test"
 
   # Этап 4: Деплой в production с PM2
   deploy-production:

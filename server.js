@@ -26,24 +26,41 @@ app.use((req, res, next) => {
 });
 
 // Инициализация ролей
+// Инициализация ролей
 const initializeRoles = async () => {
   try {
     const Role = db.role;
+    
+    // Проверяем, что модель Role доступна
+    if (!Role) {
+      console.error('❌ Role model is not available');
+      return;
+    }
+
     const rolesToCreate = [
       { id: 1, name: "user" },
       { id: 2, name: "admin" }
     ];
     
     for (const roleData of rolesToCreate) {
-      const [role, created] = await Role.findOrCreate({
-        where: { id: roleData.id },
-        defaults: roleData
-      });
-      if (created) console.log(`✅ Created role: ${roleData.name}`);
+      try {
+        const [role, created] = await Role.findOrCreate({
+          where: { id: roleData.id },
+          defaults: roleData
+        });
+        if (created) {
+          console.log(`✅ Created role: ${roleData.name}`);
+        } else {
+          console.log(`ℹ️ Role already exists: ${roleData.name}`);
+        }
+      } catch (error) {
+        console.error(`❌ Error creating role ${roleData.name}:`, error.message);
+      }
     }
     console.log('✅ Role initialization completed');
   } catch (error) {
     console.error('❌ Role initialization failed:', error.message);
+    console.error('Full error:', error);
   }
 };
 
