@@ -24,16 +24,19 @@
   "author": "Your Name",
   "license": "ISC",
   "dependencies": {
+    "apollo-server": "^3.13.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "dataloader": "^2.2.3",
     "express": "^4.18.2",
+    "graphql": "^16.12.0",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.11.3",
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.32.1",
     "sqlite3": "^5.1.7",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "jest": "^29.6.2",

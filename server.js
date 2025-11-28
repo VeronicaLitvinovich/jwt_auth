@@ -36,6 +36,43 @@ if (process.env.NODE_ENV !== 'test') {
     ? { force: false }
     : { force: true };
 
+  // Функция для инициализации ролей
+  const initializeRoles = async () => {
+    try {
+      const Role = db.role;
+      
+      // Всегда создаем роли, если их нет (даже в production)
+      const existingRoles = await Role.findAll();
+      if (existingRoles.length === 0) {
+        console.log('🔄 Initializing default roles...');
+        await Role.bulkCreate([
+          { id: 1, name: "user" },
+          { id: 2, name: "admin" },
+          { id: 3, name: "moderator" }
+        ]);
+        console.log('✅ Default roles initialized');
+      } else {
+        console.log('✅ Roles already exist, count:', existingRoles.length);
+        
+        // Проверяем наличие базовых ролей
+        const userRole = await Role.findByPk(1);
+        const adminRole = await Role.findByPk(2);
+        
+        if (!userRole) {
+          console.log('🔄 Creating missing user role...');
+          await Role.create({ id: 1, name: "user" });
+        }
+        if (!adminRole) {
+          console.log('🔄 Creating missing admin role...');
+          await Role.create({ id: 2, name: "admin" });
+        }
+      }
+    } catch (error) {
+      console.error('❌ Role initialization failed:', error.message);
+      errorCount++;
+    }
+  };
+
   const initDatabase = async () => {
     try {
       await db.sequelize.authenticate();
@@ -44,18 +81,23 @@ if (process.env.NODE_ENV !== 'test') {
       await db.sequelize.sync(syncOptions);
       console.log('✅ Database synchronized successfully');
       
-      if (syncOptions.force) {
-        const Role = db.role;
-        await Role.findOrCreate({ where: { id: 1 }, defaults: { name: "user" } });
-        await Role.findOrCreate({ where: { id: 2 }, defaults: { name: "admin" } });
-        console.log('✅ Default roles initialized');
-      }
+      // ВСЕГДА инициализируем роли, независимо от окружения
+      await initializeRoles();
+      
+      console.log('🎉 Database initialization completed successfully');
+      
     } catch (error) {
       console.error('❌ Database initialization failed:', error.message);
       errorCount++;
+      
+      // В production пытаемся продолжить работу даже при ошибке инициализации
+      if (process.env.NODE_ENV === 'production') {
+        console.log('⚠️ Continuing in production mode despite database issues');
+      }
     }
   };
 
+  // Запускаем инициализацию с задержкой
   setTimeout(initDatabase, 2000);
 }
 
@@ -64,7 +106,7 @@ app.get("/health", (req, res) => {
   const uptime = process.uptime();
   const memoryUsage = process.memoryUsage();
   
-  res.status(200).json({ 
+  const healthStatus = {
     status: "OK",
     service: "JWT Auth API",
     environment: process.env.NODE_ENV,
@@ -83,8 +125,14 @@ app.get("/health", (req, res) => {
       platform: os.platform(),
       arch: os.arch(),
       loadAverage: os.loadavg()
+    },
+    database: {
+      status: "Connected",
+      dialect: process.env.DB_DIALECT || "sqlite"
     }
-  });
+  };
+
+  res.status(200).json(healthStatus);
 });
 
 // Metrics endpoint for monitoring
@@ -121,6 +169,11 @@ app.get("/", (req, res) => {
     version: "1.0.0",
     environment: process.env.NODE_ENV,
     status: "Operational",
+    deployment: {
+      mode: process.env.NODE_ENV,
+      port: process.env.PORT,
+      database: process.env.DB_DIALECT || "sqlite"
+    },
     endpoints: {
       health: "GET /health",
       metrics: "GET /metrics",
@@ -129,6 +182,10 @@ app.get("/", (req, res) => {
         signin: "POST /api/auth/signin", 
         refresh: "POST /api/auth/refresh",
         logout: "POST /api/auth/logout"
+      },
+      user: {
+        profile: "GET /api/user/profile",
+        all: "GET /api/user/all"
       }
     }
   });
@@ -142,6 +199,12 @@ require('./app/routes/user.routes')(app);
 app.use((err, req, res, next) => {
   errorCount++;
   console.error('Error:', err.message);
+  
+  // Логируем полную ошибку в development
+  if (process.env.NODE_ENV !== 'production') {
+    console.error('Stack:', err.stack);
+  }
+  
   res.status(500).json({ 
     error: "Internal server error",
     message: process.env.NODE_ENV === 'production' ? null : err.message
@@ -152,7 +215,8 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   res.status(404).json({ 
     error: "Route not found",
-    path: req.path
+    path: req.path,
+    method: req.method
   });
 });
 
@@ -164,14 +228,37 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`📊 Metrics: http://0.0.0.0:${PORT}/metrics`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
   console.log(`🚀 Deployment: Full CI/CD Pipeline`);
+  console.log(`💾 Database: ${process.env.DB_DIALECT || 'sqlite'}`);
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
+const gracefulShutdown = (signal) => {
+  console.log(`\n${signal} received, shutting down gracefully`);
   server.close(() => {
+    console.log('✅ HTTP server closed');
     console.log('Process terminated');
+    process.exit(0);
   });
+
+  // Force close after 10 seconds
+  setTimeout(() => {
+    console.log('❌ Forcing shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 module.exports = server;
