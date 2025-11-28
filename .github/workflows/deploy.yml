@@ -1,4 +1,4 @@
-name: Full CI/CD Pipeline
+name: Full CI/CD Pipeline with Docker Compose
 
 on:
   push:
@@ -15,7 +15,6 @@ on:
 
 env:
   NODE_ENV: test
-  DB_DIALECT: sqlite
 
 jobs:
   # Этап 1: Юнит-тесты
@@ -42,6 +41,7 @@ jobs:
           npm run test:unit
         env:
           NODE_ENV: test
+          DB_DIALECT: sqlite
 
       - name: Upload unit test coverage
         uses: actions/upload-artifact@v4
@@ -50,66 +50,84 @@ jobs:
           path: coverage/
           retention-days: 7
 
-  # Этап 2: Деплой тестового окружения
+  # Этап 2: Запуск тестового окружения с Docker Compose
   deploy-test-environment:
     runs-on: self-hosted
     needs: unit-tests
-    name: 🚀 Deploy Test Environment
+    name: 🐳 Deploy Test Environment
     environment: test
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18.x"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install PM2 globally
-        run: npm install -g pm2
-
-      - name: Stop existing test application
+      - name: Setup Docker Compose
         run: |
-          pm2 stop jwtauth-test 2>/dev/null || true
-          pm2 delete jwtauth-test 2>/dev/null || true
-          echo "✅ Cleaned existing test app"
+          docker-compose version
+          echo "✅ Docker Compose available"
 
-      - name: Deploy test environment
+      - name: Stop any existing containers
         run: |
-          # Используем порт 8081 для тестов чтобы избежать конфликтов
-          NODE_ENV=test PORT=8081 DB_STORAGE=./test.sqlite pm2 start server.js --name "jwtauth-test"
-          pm2 save || true
-          echo "✅ Test app started on port 8081"
+          docker-compose down -v --remove-orphans || true
+          echo "✅ Cleaned previous containers"
 
-      - name: Wait for application to start
+      - name: Build and start services with Docker Compose
         run: |
-          echo "Waiting for test application..."
-          for i in {1..30}; do
-            if curl -s http://localhost:8081/health > /dev/null; then
-              echo "✅ Test app is healthy"
-              curl http://localhost:8081/health
-              exit 0
+          docker-compose up -d --build
+          echo "✅ Services started with Docker Compose"
+
+      - name: Wait for services to be ready
+        run: |
+          echo "⏳ Waiting for PostgreSQL and App to be ready..."
+          MAX_ATTEMPTS=30
+          ATTEMPT=1
+          SUCCESS=false
+
+          # Ждем PostgreSQL
+          echo "🔍 Waiting for PostgreSQL..."
+          until docker-compose exec -T db pg_isready -U test_admin > /dev/null 2>&1; do
+            if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
+              echo "❌ PostgreSQL failed to start within $((MAX_ATTEMPTS * 2)) seconds"
+              docker-compose logs db
+              exit 1
             fi
-            echo "Attempt $i/30 - waiting..."
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - PostgreSQL not ready..."
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 2
+          done
+          echo "✅ PostgreSQL is ready"
+
+          # Ждем приложение
+          ATTEMPT=1
+          echo "🔍 Waiting for Application..."
+          until curl -s -f http://localhost:8080/health > /dev/null; do
+            if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
+              echo "❌ Application failed to start within $((MAX_ATTEMPTS * 3)) seconds"
+              docker-compose logs app
+              exit 1
+            fi
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Application not ready..."
+            
+            # Показываем логи на определенных попытках
+            if [ $ATTEMPT -eq 10 ]; then
+              echo "📋 Recent application logs:"
+              docker-compose logs app --tail=20
+            fi
+            
+            ATTEMPT=$((ATTEMPT + 1))
             sleep 3
           done
-          echo "❌ Test app failed to start"
-          pm2 logs jwtauth-test --lines 50
-          exit 1
+          echo "✅ Application is ready and healthy"
 
-      - name: Test API endpoints
+      - name: Verify application status
         run: |
-          echo "Testing API endpoints..."
-          # Test health endpoint
-          curl -f http://localhost:8081/health
-          # Test main endpoint
-          curl -f http://localhost:8081/
-          echo "✅ Basic API tests passed"
+          echo "🔍 Verifying application status..."
+          curl -f http://localhost:8080/health
+          echo "✅ Health check passed"
+          curl -f http://localhost:8080/
+          echo "✅ Root endpoint working"
+          echo "🎉 Test environment is ready for integration tests"
 
-  # Этап 3: Интеграционные тесты на тестовом окружении
+  # Этап 3: Интеграционные тесты
   integration-tests:
     runs-on: self-hosted
     needs: deploy-test-environment
@@ -133,14 +151,17 @@ jobs:
           name: unit-test-coverage
           path: coverage/
 
-      - name: Wait for Docker application to be ready
+      - name: Verify application is still running
         run: |
-          echo "Waiting for Docker application to be ready..."
-          until curl -s http://localhost:8080/health > /dev/null; do
-            echo "Waiting for app to be ready..."
-            sleep 5
-          done
-          echo "✅ Docker app is ready for testing"
+          echo "🔍 Checking if application is still running..."
+          if curl -s -f http://localhost:8080/health > /dev/null; then
+            echo "✅ Application is running and ready for tests"
+          else
+            echo "❌ Application is not running. Restarting..."
+            docker-compose up -d app
+            sleep 10
+            curl -f http://localhost:8080/health
+          fi
 
       - name: Run integration tests against Docker environment
         env:
@@ -149,6 +170,40 @@ jobs:
         run: |
           echo "Using TEST_BASE_URL=$TEST_BASE_URL"
           npm run test:integration
+
+      - name: Test API endpoints manually
+        run: |
+          echo "🧪 Testing API endpoints manually..."
+
+          # Test health endpoint
+          echo "🔍 Testing health endpoint..."
+          curl -f http://localhost:8080/health
+          echo "✅ Health endpoint works"
+
+          # Test public endpoint
+          echo "🔍 Testing public endpoint..."
+          curl -f http://localhost:8080/api/test/all
+          echo "✅ Public endpoint works"
+
+          # Test registration
+          echo "🔍 Testing user registration..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8080/api/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"username":"githubactionstest","email":"github@example.com","password":"password123"}')
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n1)
+
+          echo "Registration response code: $HTTP_CODE"
+          echo "Registration response body: $BODY"
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ User registration test passed"
+          else
+            echo "⚠️ User registration returned $HTTP_CODE (might be expected if user exists)"
+          fi
+
+          echo "✅ Manual API tests completed"
 
       - name: Upload integration test results
         uses: actions/upload-artifact@v4
@@ -159,7 +214,7 @@ jobs:
             coverage/
           retention-days: 7
 
-  # Этап 4: Деплой в production с PM2
+  # Этап 4: Деплой в production
   deploy-production:
     runs-on: self-hosted
     needs: integration-tests
@@ -170,166 +225,88 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18.x"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install PM2 globally
-        run: npm install -g pm2
-
-      - name: Install jq for JSON parsing (optional, for diagnostics)
+      - name: Setup Docker Compose
         run: |
-          if ! command -v jq >/dev/null 2>&1; then
-            sudo apt-get update -y
-            sudo apt-get install -y jq
-          fi || true
+          docker-compose version
 
-      - name: Ensure start:production script in package.json
+      - name: Stop existing production containers
         run: |
-          npm pkg set scripts.start:production="NODE_ENV=production PORT=3000 DB_STORAGE=./production.sqlite node server.js"
-          echo "✅ start:production script set"
+          docker-compose down || true
+          echo "✅ Stopped existing production"
 
-      - name: Stop previous production instance
+      - name: Deploy to production with environment variables
         run: |
-          pm2 stop jwtauth-production 2>/dev/null || true
-          pm2 delete jwtauth-production 2>/dev/null || true
-          echo "✅ Previous production instance stopped"
+          # Используем production переменные окружения
+          NODE_ENV=production FORCE_DB_SYNC=false docker-compose up -d --build
+          echo "🚀 Production deployment started"
 
-      - name: Prepare production sqlite
+      - name: Wait for production to be ready
         run: |
-          rm -f production.sqlite
-          touch production.sqlite
-          ls -la production.sqlite
-          echo "✅ Prepared production.sqlite"
+          echo "⏳ Waiting for production to be ready..."
+          MAX_ATTEMPTS=20
+          ATTEMPT=1
 
-      - name: Deploy to production with PM2
-        run: |
-          pm2 start npm --name "jwtauth-production" -- run start:production
-          pm2 save || true
-          echo "🚀 Production deployment started with PM2 on port 3000"
+          until curl -s -f http://localhost:8080/health > /dev/null; do
+            if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
+              echo "❌ Production failed to start within $((MAX_ATTEMPTS * 5)) seconds"
+              docker-compose logs app
+              exit 1
+            fi
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Production not ready..."
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 5
+          done
+          echo "✅ Production is healthy"
 
       - name: Verify production deployment
         run: |
-          echo "Verifying production deployment..."
-          TEST_URL="http://localhost:3000/health"
-          ATTEMPTS=1
-          MAX=20
-          SLEEP=3
-          while [ $ATTEMPTS -le $MAX ]; do
-            if curl -fsS $TEST_URL > /dev/null 2>&1; then
-              echo "✅ Production application is ready (attempt $ATTEMPTS)"
-              exit 0
-            fi
-            echo "Attempt $ATTEMPTS/$MAX - not ready..."
-            ATTEMPTS=$((ATTEMPTS + 1))
-            sleep $SLEEP
-          done
+          echo "🔍 Verifying production deployment..."
+          curl -f http://localhost:8080/health
+          echo "✅ Production health check passed"
 
-          echo "❌ Production failed to become healthy"
-          echo "📋 PM2 status:"
-          pm2 status || true
-          echo "📋 PM2 logs (jwtauth-production - last 200 lines):"
-          pm2 logs jwtauth-production --lines 200 || true
-          exit 1
-
-      - name: Debug production health (optional)
-        run: |
-          echo "🔍 Checking production health and DB info..."
-          curl -fsS http://localhost:3000/health || true
-          curl -s http://localhost:3000/health | jq .database || true
-
-      - name: Test registration endpoint (non-blocking)
-        run: |
-          curl -fsS -X POST http://localhost:3000/api/auth/signup \
-            -H "Content-Type: application/json" \
-            -d '{"username":"prodtest","email":"prodtest@example.com","password":"password123"}' \
-            -w "\nHTTP Status: %{http_code}\n" || echo "Registration attempt finished"
-
-      - name: Run production smoke tests
-        run: |
-          echo "Running production smoke tests..."
-          curl -fsS -X POST http://localhost:3000/api/auth/signup \
+          # Test basic functionality
+          echo "🧪 Testing production registration..."
+          curl -s -X POST http://localhost:8080/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"productionuser","email":"production@example.com","password":"password123"}' \
-            -w "\nHTTP Status: %{http_code}\n" || echo "User creation test completed"
-          echo "✅ Production smoke tests executed"
+            -w "HTTP Status: %{http_code}\n" || echo "Registration test completed"
+
+          echo "🎉 Production deployment successful"
 
       - name: Log deployment info
         run: |
           echo "🎉 PRODUCTION DEPLOYMENT SUCCESSFUL"
-          echo "📍 URL: http://localhost:3000"
-          echo "🏥 Health: http://localhost:3000/health"
+          echo "📍 URL: http://localhost:8080"
+          echo "🏥 Health: http://localhost:8080/health"
           echo "📊 Environment: production"
           echo "🔧 Node: $(node --version)"
-          echo "🔧 PM2: $(pm2 --version)"
           echo "🕒 Deployed at: $(date)"
           echo "📝 Commit: ${{ github.sha }}"
 
-      - name: Create final summary
-        run: |
-          echo "## 🎉 CI/CD Pipeline Completed Successfully" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ✅ All Stages Passed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 📋 Execution Order:" >> $GITHUB_STEP_SUMMARY
-          echo "1. **🧪 Unit Tests** - Code validation" >> $GITHUB_STEP_SUMMARY
-          echo "2. **🚀 Test Environment** - Deployment to test" >> $GITHUB_STEP_SUMMARY
-          echo "3. **🔗 Integration Tests** - API testing on test environment" >> $GITHUB_STEP_SUMMARY
-          echo "4. **🚀 Production** - Deployment to production" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 🌐 Available Environments:" >> $GITHUB_STEP_SUMMARY
-          echo "- **Production**: http://localhost:3000" >> $GITHUB_STEP_SUMMARY
-          echo "- **Test**: http://localhost:8080" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 🔧 Process Management:" >> $GITHUB_STEP_SUMMARY
-          echo "- **Manager**: PM2" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: Both servers running persistently" >> $GITHUB_STEP_SUMMARY
-
-  # Этап 5: Откат с PM2
+  # Этап 5: Откат
   rollback:
     runs-on: self-hosted
     name: 🔄 Rollback Deployment
     environment: production
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - name: Stop current production
-        run: |
-          pm2 stop jwtauth-production 2>/dev/null || true
-          pm2 delete jwtauth-production 2>/dev/null || true
-          echo "✅ Current production stopped"
-
-      - name: Checkout previous stable version
+      - name: Checkout previous version
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.rollback_commit || 'main' }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "18.x"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install PM2 globally
-        run: npm install -g pm2
-
-      - name: Deploy previous version with PM2
+      - name: Rollback with Docker Compose
         run: |
-          pm2 start npm --name "jwtauth-production" -- run start:production
-          pm2 save || true
-          echo "🔄 Rollback deployment started with PM2"
+          docker-compose down
+          docker-compose up -d --build
+          echo "🔄 Rollback deployment started"
 
       - name: Verify rollback
         run: |
           echo "Verifying rollback..."
           counter=1
           while [ $counter -le 10 ]; do
-            if curl -f http://localhost:3000/health > /dev/null 2>&1; then
+            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
               echo "✅ Rollback successful!"
               break
             fi
@@ -343,12 +320,38 @@ jobs:
             exit 1
           fi
 
-          curl -f http://localhost:3000/health
+          curl -f http://localhost:8080/health
           echo "Rollback to commit: ${{ github.event.inputs.rollback_commit || 'main' }}"
 
-      - name: Log rollback info
+  # Этап 6: Очистка (выполняется всегда)
+  cleanup:
+    runs-on: self-hosted
+    name: 🧹 Cleanup
+    if: always()
+    needs:
+      [
+        unit-tests,
+        deploy-test-environment,
+        integration-tests,
+        deploy-production,
+      ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Stop and remove all containers
         run: |
-          echo "🔄 ROLLBACK COMPLETED"
-          echo "📍 Rollback to: ${{ github.event.inputs.rollback_commit || 'main' }}"
-          echo "🕒 Rollback time: $(date)"
-          echo "📝 Current commit: $(git rev-parse HEAD)"
+          echo "🧹 Cleaning up Docker containers..."
+          docker-compose down -v --remove-orphans || true
+          echo "✅ Cleanup completed"
+
+      - name: Final status report
+        if: always()
+        run: |
+          echo "📊 WORKFLOW COMPLETION STATUS"
+          echo "=============================="
+          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "Test Environment: ${{ needs.deploy-test-environment.result }}"
+          echo "Integration Tests: ${{ needs.integration-tests.result }}"
+          echo "Production Deploy: ${{ needs.deploy-production.result }}"
+          echo "Cleanup: ✅ Completed"

@@ -1,4 +1,5 @@
-version: '3.8'
+# УДАЛИТЕ эту строку - version устарел
+# version: '3.8'
 
 services:
   db:
