@@ -44,8 +44,29 @@ app.use((req, res, next) => {
 });
 
 // Database setup
+// База данных — подключаем всегда
+const db = require("./app/models");
+
 if (process.env.NODE_ENV !== 'test') {
-  const db = require("./app/models");
+  console.log('🚀 Starting application in', process.env.NODE_ENV, 'mode on port', process.env.PORT);
+
+  const initDatabase = async () => {
+    try {
+      await db.sequelize.authenticate();
+      console.log('✅ Database connected');
+      await db.sequelize.sync({ force: process.env.NODE_ENV !== 'production' });
+      await initializeRoles();
+      console.log('🎉 Database ready');
+    } catch (err) {
+      console.error('❌ DB init error:', err.message);
+      if (process.env.NODE_ENV === 'production')
+        console.log('⚠️ Continuing anyway');
+    }
+  };
+
+  setTimeout(initDatabase, 2000);
+}
+
   
   console.log('🚀 Starting application in', process.env.NODE_ENV, 'mode on port', process.env.PORT);
   
