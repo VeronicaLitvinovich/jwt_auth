@@ -346,36 +346,3 @@ jobs:
 
           curl -f http://localhost:8080/health
           echo "Rollback to commit: ${{ github.event.inputs.rollback_commit || 'main' }}"
-
-  # Этап 6: Очистка (выполняется всегда)
-  cleanup:
-    runs-on: self-hosted
-    name: 🧹 Cleanup
-    if: always()
-    needs:
-      [
-        unit-tests,
-        deploy-test-environment,
-        integration-tests,
-        deploy-production,
-      ]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Stop and remove all containers
-        run: |
-          echo "🧹 Cleaning up Docker containers..."
-          docker-compose down -v --remove-orphans || true
-          echo "✅ Cleanup completed"
-
-      - name: Final status report
-        if: always()
-        run: |
-          echo "📊 WORKFLOW COMPLETION STATUS"
-          echo "=============================="
-          echo "Unit Tests: ${{ needs.unit-tests.result }}"
-          echo "Test Environment: ${{ needs.deploy-test-environment.result }}"
-          echo "Integration Tests: ${{ needs.integration-tests.result }}"
-          echo "Production Deploy: ${{ needs.deploy-production.result }}"
-          echo "Cleanup: ✅ Completed"
