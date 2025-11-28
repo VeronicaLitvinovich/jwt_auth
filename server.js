@@ -7,8 +7,25 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
-  credentials: true
+  origin: function(origin, callback) {
+    // Разрешаем запросы без origin (например, от мобильных приложений или curl)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      "http://localhost:3000",
+      "http://localhost:8080",
+      process.env.CLIENT_URL
+    ].filter(Boolean);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'test') {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-access-token']
 }));
 app.use(cookieParser());
 app.use(express.json());
@@ -37,102 +54,114 @@ if (process.env.NODE_ENV !== 'test') {
     : { force: true };
 
   // Функция для инициализации ролей
+    // Функция для надежной инициализации ролей
   const initializeRoles = async () => {
     try {
       const Role = db.role;
       
-      // Всегда создаем роли, если их нет (даже в production)
-      const existingRoles = await Role.findAll();
-      if (existingRoles.length === 0) {
-        console.log('🔄 Initializing default roles...');
-        await Role.bulkCreate([
-          { id: 1, name: "user" },
-          { id: 2, name: "admin" },
-          { id: 3, name: "moderator" }
-        ]);
-        console.log('✅ Default roles initialized');
-      } else {
-        console.log('✅ Roles already exist, count:', existingRoles.length);
+      // Всегда создаем базовые роли, если их нет
+      const rolesToCreate = [
+        { id: 1, name: "user" },
+        { id: 2, name: "admin" }
+      ];
+      
+      for (const roleData of rolesToCreate) {
+        const [role, created] = await Role.findOrCreate({
+          where: { id: roleData.id },
+          defaults: roleData
+        });
         
-        // Проверяем наличие базовых ролей
-        const userRole = await Role.findByPk(1);
-        const adminRole = await Role.findByPk(2);
-        
-        if (!userRole) {
-          console.log('🔄 Creating missing user role...');
-          await Role.create({ id: 1, name: "user" });
-        }
-        if (!adminRole) {
-          console.log('🔄 Creating missing admin role...');
-          await Role.create({ id: 2, name: "admin" });
+        if (created) {
+          console.log(`✅ Created role: ${roleData.name}`);
+        } else {
+          // Обновляем имя роли, если оно изменилось
+          if (role.name !== roleData.name) {
+            await role.update({ name: roleData.name });
+            console.log(`✅ Updated role: ${roleData.name}`);
+          }
         }
       }
+      
+      console.log('✅ Role initialization completed');
     } catch (error) {
       console.error('❌ Role initialization failed:', error.message);
-      errorCount++;
+      throw error;
     }
   };
 
   const initDatabase = async () => {
-    try {
-      await db.sequelize.authenticate();
-      console.log('✅ Database connection established successfully.');
-      
-      await db.sequelize.sync(syncOptions);
-      console.log('✅ Database synchronized successfully');
-      
-      // ВСЕГДА инициализируем роли, независимо от окружения
-      await initializeRoles();
-      
-      console.log('🎉 Database initialization completed successfully');
-      
-    } catch (error) {
-      console.error('❌ Database initialization failed:', error.message);
-      errorCount++;
-      
-      // В production пытаемся продолжить работу даже при ошибке инициализации
-      if (process.env.NODE_ENV === 'production') {
-        console.log('⚠️ Continuing in production mode despite database issues');
-      }
+  try {
+    await db.sequelize.authenticate();
+    console.log('✅ Database connection established successfully.');
+    
+    // Синхронизируем базу с принудительным созданием таблиц в test, аккуратнее в production
+    const syncOptions = process.env.NODE_ENV === 'production' 
+      ? { force: false } // В production не пересоздаем таблицы
+      : { force: true }; // В test пересоздаем
+    
+    await db.sequelize.sync(syncOptions);
+    console.log('✅ Database synchronized successfully');
+    
+    // Инициализация ролей
+    await initializeRoles();
+    
+    console.log('🎉 Database initialization completed successfully');
+    
+  } catch (error) {
+    console.error('❌ Database initialization failed:', error.message);
+    // В production продолжаем работу даже при ошибке базы данных
+    if (process.env.NODE_ENV === 'production') {
+      console.log('⚠️ Continuing in production mode despite database issues');
     }
-  };
+  }
+};
 
   // Запускаем инициализацию с задержкой
   setTimeout(initDatabase, 2000);
 }
 
-// Enhanced health check with metrics
-app.get("/health", (req, res) => {
-  const uptime = process.uptime();
-  const memoryUsage = process.memoryUsage();
-  
-  const healthStatus = {
-    status: "OK",
-    service: "JWT Auth API",
-    environment: process.env.NODE_ENV,
-    timestamp: new Date().toISOString(),
-    uptime: `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`,
-    metrics: {
-      requestCount,
-      errorCount,
-      memory: {
-        rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`,
-        heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
-        heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`
-      }
-    },
-    system: {
-      platform: os.platform(),
-      arch: os.arch(),
-      loadAverage: os.loadavg()
-    },
-    database: {
-      status: "Connected",
-      dialect: process.env.DB_DIALECT || "sqlite"
+app.get("/health", async (req, res) => {
+  try {
+    // Проверяем соединение с базой данных
+    let dbStatus = "Unknown";
+    try {
+      await db.sequelize.authenticate();
+      dbStatus = "Connected";
+      
+      // Проверяем наличие базовых таблиц
+      const tables = await db.sequelize.getQueryInterface().showAllTables();
+      dbStatus += ` (${tables.length} tables)`;
+      
+    } catch (dbError) {
+      dbStatus = "Error: " + dbError.message;
     }
-  };
 
-  res.status(200).json(healthStatus);
+    const healthStatus = {
+      status: "OK",
+      service: "JWT Auth API",
+      environment: process.env.NODE_ENV,
+      timestamp: new Date().toISOString(),
+      database: {
+        status: dbStatus,
+        dialect: process.env.DB_DIALECT || "sqlite",
+        storage: process.env.DB_STORAGE
+      },
+      endpoints: {
+        auth: {
+          signup: "POST /api/auth/signup",
+          signin: "POST /api/auth/signin",
+          session: "GET /api/auth/session"
+        }
+      }
+    };
+
+    res.status(200).json(healthStatus);
+  } catch (error) {
+    res.status(500).json({
+      status: "ERROR",
+      error: error.message
+    });
+  }
 });
 
 // Metrics endpoint for monitoring

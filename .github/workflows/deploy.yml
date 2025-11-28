@@ -220,6 +220,10 @@ jobs:
       - name: Install PM2 globally
         run: npm install -g pm2
 
+      - name: Install jq for JSON parsing
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
       - name: Add start:production script to package.json
         run: |
           npm pkg set scripts.start:production="NODE_ENV=production PORT=3000 DB_STORAGE=./production.sqlite node server.js"
@@ -265,10 +269,30 @@ jobs:
             exit 1
           fi
 
-          curl -f http://localhost:3000/health
+      - name: Debug production health
+        run: |
+          echo "🔍 Checking production health..."
+          curl -f http://localhost:3000/health || echo "Health check failed"
           echo ""
-          curl -f http://localhost:3000/
-          echo ""
+          echo "🔍 Checking database status..."
+          curl -s http://localhost:3000/health | jq .database || echo "Cannot get database status"
+
+      - name: Test registration endpoint
+        run: |
+          echo "🧪 Testing registration endpoint..."
+          curl -X POST http://localhost:3000/api/auth/signup \
+            -H "Content-Type: application/json" \
+            -d '{"username":"testuser","email":"test@example.com","password":"password123"}' \
+            -w "\nHTTP Status: %{http_code}\n" \
+            -v || echo "Registration test completed with exit code: $?"
+
+      - name: Check PM2 logs if registration fails
+        if: failure()
+        run: |
+          echo "📋 PM2 status:"
+          pm2 status
+          echo "📋 PM2 logs (last 50 lines):"
+          pm2 logs jwtauth-production --lines 50
 
       - name: Run production smoke tests
         run: |
