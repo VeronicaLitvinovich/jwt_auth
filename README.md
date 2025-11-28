@@ -12,3 +12,4 @@ docker-compose up --build
 
 cd /Users/veronikalitvinovic/actions-runner
 ./run.sh
+v
