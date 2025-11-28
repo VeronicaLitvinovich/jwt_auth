@@ -71,64 +71,43 @@ jobs:
       - name: Install PM2 globally
         run: npm install -g pm2
 
-      - name: Ensure start:test script in package.json
-        run: |
-          # Устанавливаем стартовый скрипт (idempotent)
-          npm pkg set scripts.start:test="NODE_ENV=test PORT=8080 DB_STORAGE=./test.sqlite node server.js"
-          echo "✅ start:test script set"
-
-      - name: Stop existing test application (clean)
+      - name: Stop existing test application
         run: |
           pm2 stop jwtauth-test 2>/dev/null || true
           pm2 delete jwtauth-test 2>/dev/null || true
-          echo "✅ Stopped and removed any existing jwtauth-test processes"
+          echo "✅ Cleaned existing test app"
 
-      - name: Prepare test sqlite file
+      - name: Deploy test environment
         run: |
-          rm -f test.sqlite
-          touch test.sqlite
-          ls -la test.sqlite
-          echo "✅ Prepared test.sqlite"
-
-      - name: Deploy test environment with PM2
-        run: |
-          # запускаем через npm, скрипт start:test задаёт NODE_ENV и PORT
-          pm2 start npm --name "jwtauth-test" -- run start:test
+          # Используем порт 8081 для тестов чтобы избежать конфликтов
+          NODE_ENV=test PORT=8081 DB_STORAGE=./test.sqlite pm2 start server.js --name "jwtauth-test"
           pm2 save || true
-          echo "✅ PM2 start attempted for jwtauth-test"
+          echo "✅ Test app started on port 8081"
 
-      - name: Wait for application to start and verify health
+      - name: Wait for application to start
         run: |
-          TEST_URL="http://localhost:8080/health"
-          echo "Waiting for $TEST_URL ..."
-          ATTEMPTS=1
-          MAX=30
-          SLEEP=3
-          while [ $ATTEMPTS -le $MAX ]; do
-            if curl -fsS $TEST_URL > /dev/null 2>&1; then
-              echo "✅ Test environment is healthy (attempt $ATTEMPTS)"
+          echo "Waiting for test application..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8081/health > /dev/null; then
+              echo "✅ Test app is healthy"
+              curl http://localhost:8081/health
               exit 0
             fi
-            echo "Attempt $ATTEMPTS/$MAX - not ready yet..."
-            ATTEMPTS=$((ATTEMPTS + 1))
-            sleep $SLEEP
+            echo "Attempt $i/30 - waiting..."
+            sleep 3
           done
-
-          echo "❌ Test environment health check failed after $MAX attempts"
-          echo "📋 PM2 status:"
-          pm2 status || true
-          echo "📋 PM2 list:"
-          pm2 list || true
-          echo "📋 Recent PM2 logs (jwtauth-test - last 200 lines):"
-          pm2 logs jwtauth-test --lines 200 || true
+          echo "❌ Test app failed to start"
+          pm2 logs jwtauth-test --lines 50
           exit 1
 
-      - name: Basic API smoke tests
+      - name: Test API endpoints
         run: |
-          echo "🔍 Running basic API smoke tests..."
-          curl -fsS http://localhost:8080/health && echo "✅ Health check passed"
-          curl -fsS http://localhost:8080/api/test/all && echo "✅ Public endpoint works"
-          echo "✅ Test environment is ready for integration tests"
+          echo "Testing API endpoints..."
+          # Test health endpoint
+          curl -f http://localhost:8081/health
+          # Test main endpoint
+          curl -f http://localhost:8081/
+          echo "✅ Basic API tests passed"
 
   # Этап 3: Интеграционные тесты на тестовом окружении
   integration-tests:

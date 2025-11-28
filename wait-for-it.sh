@@ -4,10 +4,12 @@ host="$1"
 shift
 cmd="$@"
 
-until (echo > /dev/tcp/$host/5432) &> /dev/null; do
-  echo "Postgres is unavailable"
-  sleep 1
+echo "Waiting for Postgres at host: $host"
+
+until pg_isready -h "$host" -p 5432; do
+  echo "Postgres is unavailable - sleeping"
+  sleep 2
 done
 
-echo "Postgres is up"
-exec $cmd 
+echo "Postgres is up - executing command"
+exec $cmd
