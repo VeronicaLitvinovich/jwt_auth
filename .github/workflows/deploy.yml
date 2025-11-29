@@ -307,6 +307,11 @@ jobs:
           echo "🕒 Deployed at: $(date)"
           echo "📝 Commit: ${{ github.sha }}"
 
+      - name: Check production database roles
+        run: |
+          echo "🔍 Checking production database roles..."
+          docker-compose exec -T db psql -U test_admin -d test_lab4_1 -c "SELECT * FROM roles;" || echo "Cannot check roles table"
+
   # Этап 5: Откат
   rollback:
     runs-on: self-hosted
