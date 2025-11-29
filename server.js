@@ -26,9 +26,13 @@ app.use((req, res, next) => {
 });
 
 // Improved role initialization
+// Улучшенная инициализация ролей
 const initializeRoles = async () => {
   try {
     const Role = db.role;
+    
+    console.log('🔧 Starting role initialization...');
+    console.log(`📊 Environment: ${process.env.NODE_ENV}`);
     
     if (!Role) {
       console.error('❌ Role model is not available');
@@ -40,41 +44,77 @@ const initializeRoles = async () => {
       { id: 2, name: "admin" }
     ];
     
+    let successCount = 0;
     for (const roleData of rolesToCreate) {
       try {
+        console.log(`🔄 Processing role: ${roleData.name} (ID: ${roleData.id})`);
         const [role, created] = await Role.findOrCreate({
           where: { id: roleData.id },
           defaults: roleData
         });
         if (created) {
           console.log(`✅ Created role: ${roleData.name}`);
+          successCount++;
         } else {
           console.log(`ℹ️ Role already exists: ${roleData.name}`);
+          successCount++;
         }
       } catch (error) {
         console.error(`❌ Error creating role ${roleData.name}:`, error.message);
       }
     }
-    console.log('✅ Role initialization completed');
+    
+    if (successCount === rolesToCreate.length) {
+      console.log('🎉 Role initialization completed successfully');
+    } else {
+      console.error(`⚠️ Role initialization partially completed: ${successCount}/${rolesToCreate.length} roles`);
+    }
   } catch (error) {
     console.error('❌ Role initialization failed:', error.message);
+    console.error('Full error:', error);
   }
 };
 
-// Database initialization
+// Улучшенная инициализация базы данных
 const initDatabase = async () => {
   try {
+    console.log('🔧 Starting database initialization...');
+    console.log(`📊 NODE_ENV: ${process.env.NODE_ENV}`);
+    console.log(`📊 DB_HOST: ${process.env.DB_HOST}`);
+    console.log(`📊 DB_PORT: ${process.env.DB_PORT}`);
+    console.log(`📊 DB_USER: ${process.env.DB_USER}`);
+    console.log(`📊 DB_NAME: ${process.env.DB_NAME}`);
+    console.log(`📊 PORT: ${process.env.PORT}`);
+    
+    // Проверяем наличие обязательных переменных
+    if (!process.env.DB_HOST) {
+      console.error('❌ DB_HOST is not set');
+    }
+    if (!process.env.DB_USER) {
+      console.error('❌ DB_USER is not set');
+    }
+    
     await db.sequelize.authenticate();
     console.log('✅ Database connection established');
     
-    // Sync with force only in test environment
-    const forceSync = process.env.FORCE_DB_SYNC === 'true' || process.env.NODE_ENV === 'test';
-    await db.sequelize.sync({ force: forceSync });
+    // В production используем безопасную синхронизацию
+    const syncOptions = process.env.NODE_ENV === 'production' 
+      ? { alter: true } // Безопасное изменение структуры
+      : { force: false }; // В development/test
+    
+    await db.sequelize.sync(syncOptions);
+    console.log('✅ Database synchronized');
     
     await initializeRoles();
     console.log('🎉 Database initialization completed');
   } catch (error) {
     console.error('❌ Database initialization failed:', error.message);
+    console.error('Full error:', error);
+    
+    // В production продолжаем работу даже при ошибке БД
+    if (process.env.NODE_ENV === 'production') {
+      console.log('⚠️ Continuing in production mode despite DB issues');
+    }
   }
 };
 

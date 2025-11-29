@@ -14,7 +14,9 @@
     "test:integration": "NODE_ENV=test jest tests/integration --verbose --detectOpenHandles --forceExit --passWithNoTests",
     "test:integration:basic": "NODE_ENV=test jest tests/integration/basic.test.js --verbose",
     "test:integration:auth": "NODE_ENV=test jest tests/integration/auth.routes.test.js --verbose",
-    "test:integration:user": "NODE_ENV=test jest tests/integration/user.routes.test.js --verbose"
+    "test:integration:user": "NODE_ENV=test jest tests/integration/user.routes.test.js --verbose",
+    "check:prod": "docker-compose -f docker-compose.prod.yml -p jwt-auth-prod ps",
+    "docker:clean": "./cleanup.sh"
   },
   "keywords": [
     "authentication",
