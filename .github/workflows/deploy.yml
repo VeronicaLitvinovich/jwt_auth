@@ -22,6 +22,13 @@ jobs:
     runs-on: self-hosted
     name: 🧪 Unit Tests
     steps:
+      - name: Clean up any running containers
+        run: |
+          docker-compose down -v --remove-orphans || true
+          # Также останавливаем production контейнеры, если они используют другой compose файл
+          docker-compose -f docker-compose.prod.yml -p jwt-auth-prod down -v --remove-orphans || true
+          echo "✅ Cleaned any running containers"
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -213,6 +220,7 @@ jobs:
             test-results/
             coverage/
           retention-days: 7
+
       - name: Run basic API tests
         env:
           NODE_ENV: test
