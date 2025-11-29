@@ -16,7 +16,15 @@
     "test:integration:auth": "NODE_ENV=test jest tests/integration/auth.routes.test.js --verbose",
     "test:integration:user": "NODE_ENV=test jest tests/integration/user.routes.test.js --verbose",
     "check:prod": "docker-compose -f docker-compose.prod.yml -p jwt-auth-prod ps",
-    "docker:clean": "./cleanup.sh"
+    "docker:clean": "./cleanup.sh",
+    "test:local": "NODE_ENV=test node server.js",
+    "docker:test": "docker-compose up -d --build",
+    "docker:prod": "docker-compose -f docker-compose.prod.yml -p jwt-auth-prod up -d --build",
+    "docker:both": "./start-both.sh",
+    "docker:stop": "docker-compose down && docker-compose -f docker-compose.prod.yml -p jwt-auth-prod down",
+    "docker:stop:test": "docker-compose down",
+    "docker:stop:prod": "docker-compose -f docker-compose.prod.yml -p jwt-auth-prod down",
+    "status": "echo '=== Test Environment ===' && docker-compose ps && echo '=== Production Environment ===' && docker-compose -f docker-compose.prod.yml -p jwt-auth-prod ps"
   },
   "keywords": [
     "authentication",

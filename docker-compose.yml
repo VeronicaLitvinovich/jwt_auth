@@ -1,23 +1,23 @@
 services:
-  db:
+  db-test:
     image: postgres:13
     environment:
       POSTGRES_USER: test_admin
       POSTGRES_PASSWORD: test_1234
       POSTGRES_DB: test_lab4_1
     ports:
-      - "5432:5432"
+      - "5434:5432"  # Тестовая БД на порту 5434
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_admin -d test_lab4_1"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  app:
+  app-test:
     build: .
     environment:
       NODE_ENV: test
-      DB_HOST: db
+      DB_HOST: db-test
       DB_PORT: 5432
       DB_USER: test_admin
       DB_PASSWORD: test_1234
@@ -27,7 +27,6 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      db:
+      db-test:
         condition: service_healthy
-    # Простая команда без ожидания - depends_on с healthcheck должен быть достаточным
     command: ["npm", "start"]
