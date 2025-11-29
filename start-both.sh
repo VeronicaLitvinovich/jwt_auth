@@ -7,6 +7,11 @@ echo "🧹 Cleaning up previous containers..."
 docker-compose down -v --remove-orphans 2>/dev/null || true
 docker-compose -f docker-compose.prod.yml -p jwt-auth-prod down -v --remove-orphans 2>/dev/null || true
 
+# Освобождаем порты (убиваем процессы на портах 5433, 5435 если есть)
+echo "🔧 Freeing up ports..."
+pkill -f ":5433" || true
+pkill -f ":5435" || true
+
 echo "🔧 Starting test environment (port 8080)..."
 docker-compose up -d --build
 

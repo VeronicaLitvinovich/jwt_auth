@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: test_1234
       POSTGRES_DB: test_lab4_1
     ports:
-      - "5433:5432"  # Production БД на порту 5433
+      - "5435:5432"  # Меняем на 5435
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_admin -d test_lab4_1"]
       interval: 5s
