@@ -18,5 +18,5 @@ describe('Basic API Tests', () => {
   test('Public endpoint should be accessible', async () => {
     const response = await request(BASE_URL).get('/api/test/all');
     expect(response.status).toBe(200);
-  });асапмрио
+  });
 });
