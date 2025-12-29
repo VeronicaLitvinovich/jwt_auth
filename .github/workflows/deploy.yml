@@ -25,17 +25,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Stop services on ports 3000 and 8080
+      - name: Stop all services before tests
         run: |
-          echo "🛑 Stopping services on ports 3000 and 8080..."
-          # Остановка процессов на порту 3000
+          echo "🛑 Stopping all services..."
+          # Остановка процессов на всех портах
           lsof -ti:3000 | xargs kill -9 2>/dev/null || echo "No process on port 3000"
-          # Остановка процессов на порту 8080
           lsof -ti:8080 | xargs kill -9 2>/dev/null || echo "No process on port 8080"
+          lsof -ti:8081 | xargs kill -9 2>/dev/null || echo "No process on port 8081"
           # Остановка всех Docker Compose контейнеров
           docker-compose down -v --remove-orphans 2>/dev/null || true
           docker-compose -f docker-compose.prod.yml down -v --remove-orphans 2>/dev/null || true
-          echo "✅ All services stopped - ports cleaned"
+          echo "✅ All services stopped"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -59,13 +59,15 @@ jobs:
           name: unit-test-coverage
           path: coverage/
 
-      - name: Stop production on failure
+      - name: Cleanup on test failure
         if: failure()
         run: |
-          echo "❌ Unit tests failed - stopping production on port 3000..."
+          echo "❌ Unit tests failed - ensuring clean state..."
           lsof -ti:3000 | xargs kill -9 2>/dev/null || echo "No process on port 3000"
+          lsof -ti:8081 | xargs kill -9 2>/dev/null || echo "No process on port 8081"
+          docker-compose down 2>/dev/null || true
           docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
-          echo "✅ Production stopped"
+          echo "✅ All services stopped"
 
   # Этап 2: Запуск тестового окружения с Docker Compose
   deploy-test-environment:
@@ -117,7 +119,7 @@ jobs:
           # Ждем приложение
           ATTEMPT=1
           echo "🔍 Waiting for Application..."
-          until curl -s -f http://localhost:8080/health > /dev/null; do
+          until curl -s -f http://localhost:8081/health > /dev/null; do
             if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
               echo "❌ Application failed to start within $((MAX_ATTEMPTS * 3)) seconds"
               docker-compose logs app
@@ -139,9 +141,9 @@ jobs:
       - name: Verify application status
         run: |
           echo "🔍 Verifying application status..."
-          curl -f http://localhost:8080/health
+          curl -f http://localhost:8081/health
           echo "✅ Health check passed"
-          curl -f http://localhost:8080/
+          curl -f http://localhost:8081/
           echo "✅ Root endpoint working"
           echo "🎉 Test environment is ready for integration tests"
 
@@ -173,19 +175,19 @@ jobs:
       - name: Verify application is still running
         run: |
           echo "🔍 Checking if application is still running..."
-          if curl -s -f http://localhost:8080/health > /dev/null; then
+          if curl -s -f http://localhost:8081/health > /dev/null; then
             echo "✅ Application is running and ready for tests"
           else
             echo "❌ Application is not running. Restarting..."
             docker-compose up -d app
             sleep 10
-            curl -f http://localhost:8080/health
+            curl -f http://localhost:8081/health
           fi
 
       - name: Run integration tests against Docker environment
         env:
           NODE_ENV: test
-          TEST_BASE_URL: http://localhost:8080
+          TEST_BASE_URL: http://localhost:8081
         run: |
           echo "Using TEST_BASE_URL=$TEST_BASE_URL"
           npm run test:integration
@@ -196,17 +198,17 @@ jobs:
 
           # Test health endpoint
           echo "🔍 Testing health endpoint..."
-          curl -f http://localhost:8080/health
+          curl -f http://localhost:8081/health
           echo "✅ Health endpoint works"
 
           # Test public endpoint
           echo "🔍 Testing public endpoint..."
-          curl -f http://localhost:8080/api/test/all
+          curl -f http://localhost:8081/api/test/all
           echo "✅ Public endpoint works"
 
           # Test registration
           echo "🔍 Testing user registration..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8080/api/auth/signup \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8081/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"githubactionstest","email":"github@example.com","password":"password123"}')
 
@@ -236,7 +238,7 @@ jobs:
       - name: Run basic API tests
         env:
           NODE_ENV: test
-          TEST_BASE_URL: http://localhost:8080
+          TEST_BASE_URL: http://localhost:8081
         run: |
           echo "Running basic API tests..."
           npm run test:integration:basic
@@ -245,16 +247,16 @@ jobs:
         run: |
           echo "🔍 Debugging API responses..."
           echo "Health endpoint:"
-          curl -s http://localhost:8080/health | jq . || curl -s http://localhost:8080/health
+          curl -s http://localhost:8081/health | jq . || curl -s http://localhost:8081/health
           echo ""
           echo "Public endpoint:"
-          curl -s http://localhost:8080/api/test/all | jq . || curl -s http://localhost:8080/api/test/all
+          curl -s http://localhost:8081/api/test/all | jq . || curl -s http://localhost:8081/api/test/all
           echo ""
           echo "Testing registration:"
-          curl -s -X POST http://localhost:8080/api/auth/signup \
+          curl -s -X POST http://localhost:8081/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"debuguser","email":"debug@example.com","password":"password123"}' | jq . || \
-          curl -s -X POST http://localhost:8080/api/auth/signup \
+          curl -s -X POST http://localhost:8081/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"debuguser","email":"debug@example.com","password":"password123"}'
 
@@ -401,7 +403,7 @@ jobs:
           echo "Verifying rollback..."
           counter=1
           while [ $counter -le 10 ]; do
-            if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+            if curl -f http://localhost:8081/health > /dev/null 2>&1; then
               echo "✅ Rollback successful!"
               break
             fi
@@ -415,5 +417,5 @@ jobs:
             exit 1
           fi
 
-          curl -f http://localhost:8080/health
+          curl -f http://localhost:8081/health
           echo "Rollback to commit: ${{ github.event.inputs.rollback_commit || 'main' }}"
