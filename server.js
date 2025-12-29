@@ -6,7 +6,6 @@ const db = require("./app/models");
 
 const app = express();
 
-// CORS configuration
 app.use(cors({
   origin: true,
   credentials: true,
@@ -15,7 +14,6 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Metrics
 let requestCount = 0;
 let errorCount = 0;
 
@@ -25,8 +23,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Improved role initialization
-// Улучшенная инициализация ролей
 const initializeRoles = async () => {
   try {
     const Role = db.role;
@@ -75,7 +71,6 @@ const initializeRoles = async () => {
   }
 };
 
-// Улучшенная инициализация базы данных
 const initDatabase = async () => {
   try {
     console.log('🔧 Starting database initialization...');
@@ -86,7 +81,6 @@ const initDatabase = async () => {
     console.log(`📊 DB_NAME: ${process.env.DB_NAME}`);
     console.log(`📊 PORT: ${process.env.PORT}`);
     
-    // Проверяем наличие обязательных переменных
     if (!process.env.DB_HOST) {
       console.error('❌ DB_HOST is not set');
     }
@@ -97,10 +91,9 @@ const initDatabase = async () => {
     await db.sequelize.authenticate();
     console.log('✅ Database connection established');
     
-    // В production используем безопасную синхронизацию
     const syncOptions = process.env.NODE_ENV === 'production' 
-      ? { alter: true } // Безопасное изменение структуры
-      : { force: false }; // В development/test
+      ? { alter: true } 
+      : { force: false }; 
     
     await db.sequelize.sync(syncOptions);
     console.log('✅ Database synchronized');
@@ -111,17 +104,14 @@ const initDatabase = async () => {
     console.error('❌ Database initialization failed:', error.message);
     console.error('Full error:', error);
     
-    // В production продолжаем работу даже при ошибке БД
     if (process.env.NODE_ENV === 'production') {
       console.log('⚠️ Continuing in production mode despite DB issues');
     }
   }
 };
 
-// Initialize DB with delay
 setTimeout(initDatabase, 3000);
 
-// Health endpoint
 app.get("/health", async (req, res) => {
   const healthcheck = {
     status: "OK",
@@ -153,7 +143,6 @@ app.get("/health", async (req, res) => {
   res.json(healthcheck);
 });
 
-// Main endpoint
 app.get("/", (req, res) => {
   res.json({ 
     message: "🚀 JWT Authentication API", 
@@ -162,11 +151,9 @@ app.get("/", (req, res) => {
   });
 });
 
-// Routes
 require('./app/routes/auth.routes')(app);
 require('./app/routes/user.routes')(app);
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({ 
     error: "Route not found", 
@@ -175,7 +162,6 @@ app.use((req, res) => {
   });
 });
 
-// Error handler
 app.use((err, req, res, next) => {
   errorCount++;
   console.error('Error:', err.message);
@@ -192,7 +178,6 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔧 Environment: ${process.env.NODE_ENV}`);
 });
 
-// Improved graceful shutdown
 const gracefulShutdown = (signal) => {
   console.log(`\n📢 ${signal} received, shutting down gracefully`);
   console.log(`📊 Current time: ${new Date().toISOString()}`);
@@ -200,7 +185,6 @@ const gracefulShutdown = (signal) => {
   
   server.close(() => {
     console.log('✅ HTTP server closed');
-    // In test environment, don't exit immediately
     if (process.env.NODE_ENV === 'test') {
       console.log('ℹ️ Test environment - delayed exit');
       setTimeout(() => {
@@ -212,7 +196,6 @@ const gracefulShutdown = (signal) => {
     }
   });
   
-  // Force exit after 10 seconds
   setTimeout(() => {
     console.log('❌ Forced shutdown');
     process.exit(1);
