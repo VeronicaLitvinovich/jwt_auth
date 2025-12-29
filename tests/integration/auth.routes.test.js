@@ -105,14 +105,12 @@ describe('Auth Routes Integration Tests', () => {
 
       const refreshToken = signinResponse.body.refreshToken;
 
-      // Тестируем обновление токена
       const response = await request(BASE_URL)
         .post('/api/auth/refresh')
         .send({ refreshToken });
 
-      // Проверяем что ответ успешный (200 или 201 в зависимости от реализации)
       expect([200, 201]).toContain(response.status);
       expect(response.body).toHaveProperty('accessToken');
     });
   });
-});dfghj
+});
