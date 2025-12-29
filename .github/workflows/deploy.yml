@@ -51,6 +51,7 @@ jobs:
   deploy-test-environment:
     runs-on: self-hosted
     needs: unit-tests
+    if: success() # Запускается только если unit-tests прошли успешно
     name: 🐳 Deploy Test Environment
     environment: test
     steps:
@@ -128,6 +129,7 @@ jobs:
   integration-tests:
     runs-on: self-hosted
     needs: deploy-test-environment
+    if: success() # Запускается только если тестовое окружение развернулось
     name: 🔗 Integration Tests
     environment: test
     steps:
@@ -242,7 +244,8 @@ jobs:
     needs: integration-tests
     environment: production
     name: 🚀 Deploy to Production
-    if: github.ref == 'refs/heads/main'
+    # Запускается только если все интеграционные тесты прошли успешно и это main ветка
+    if: success() && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
