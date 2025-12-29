@@ -12,14 +12,14 @@ git push
 
 echo -e "\n1. Testing user registration...\n1a. Test environment (8080):..."
 curl -X POST -H "Content-Type: application/json" -d '{
-  "username": "testuser1",
-  "email": "test1@example.com",
+  "username": "testuser",
+  "email": "test@example.com",
   "password": "123456"
 }' "http://localhost:8080/api/auth/signup"
 
 curl -X POST -H "Content-Type: application/json" -d '{
-  "username": "testuser1",
-  "email": "test1@example.com",
+  "username": "testuser",
+  "email": "test@example.com",
   "password": "123456"
 }' "http://localhost:3000/api/auth/signup"
 

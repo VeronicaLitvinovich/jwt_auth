@@ -1,5 +1,5 @@
 exports.allAccess = (req, res) => {
-  res.status(200).send("Test info lab4.");
+  res.status(200).send("update version");
 };
 
 exports.userBoard = (req, res) => {
