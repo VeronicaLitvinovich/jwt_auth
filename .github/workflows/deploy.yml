@@ -104,7 +104,7 @@ jobs:
           echo "⏳ Waiting for application on port 8080..."
           MAX_ATTEMPTS=15
           ATTEMPT=1
-          until curl -s -f http://localhost:8080/health > /dev/null; do
+          until curl -s -f http://127.0.0.1:8080/health > /dev/null; do
             if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
               echo "❌ Application failed to start"
               pm2 logs test-env --lines 50
@@ -119,9 +119,9 @@ jobs:
       - name: Verify application status
         run: |
           echo "🔍 Verifying application status..."
-          curl -f http://localhost:8080/health
+          curl -f http://127.0.0.1:8080/health
           echo "✅ Health check passed"
-          curl -f http://localhost:8080/
+          curl -f http://127.0.0.1:8080/
           echo "✅ Root endpoint working"
           echo "🎉 Test environment is ready for integration tests"
 
@@ -153,19 +153,19 @@ jobs:
       - name: Verify application is still running
         run: |
           echo "🔍 Checking if application is still running..."
-          if curl -s -f http://localhost:8080/health > /dev/null; then
+          if curl -s -f http://127.0.0.1:8080/health > /dev/null; then
             echo "✅ Application is running and ready for tests"
           else
             echo "❌ Application is not running. Restarting..."
-            docker-compose up -d app
+            pm2 restart test-env
             sleep 10
-            curl -f http://localhost:8080/health
+            curl -f http://127.0.0.1:8080/health
           fi
 
       - name: Run integration tests against Docker environment
         env:
           NODE_ENV: test
-          TEST_BASE_URL: http://localhost:8080
+          TEST_BASE_URL: http://127.0.0.1:8080
         run: |
           echo "Using TEST_BASE_URL=$TEST_BASE_URL"
           npm run test:integration
@@ -176,17 +176,17 @@ jobs:
 
           # Test health endpoint
           echo "🔍 Testing health endpoint..."
-          curl -f http://localhost:8080/health
+          curl -f http://127.0.0.1:8080/health
           echo "✅ Health endpoint works"
 
           # Test public endpoint
           echo "🔍 Testing public endpoint..."
-          curl -f http://localhost:8080/api/test/all
+          curl -f http://127.0.0.1:8080/api/test/all
           echo "✅ Public endpoint works"
 
           # Test registration
           echo "🔍 Testing user registration..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8080/api/auth/signup \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:8080/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"githubactionstest","email":"github@example.com","password":"password123"}')
 
@@ -216,7 +216,7 @@ jobs:
       - name: Run basic API tests
         env:
           NODE_ENV: test
-          TEST_BASE_URL: http://localhost:8080
+          TEST_BASE_URL: http://127.0.0.1:8080
         run: |
           echo "Running basic API tests..."
           npm run test:integration:basic
@@ -225,16 +225,16 @@ jobs:
         run: |
           echo "🔍 Debugging API responses..."
           echo "Health endpoint:"
-          curl -s http://localhost:8080/health | jq . || curl -s http://localhost:8080/health
+          curl -s http://127.0.0.1:8080/health | jq . || curl -s http://127.0.0.1:8080/health
           echo ""
           echo "Public endpoint:"
-          curl -s http://localhost:8080/api/test/all | jq . || curl -s http://localhost:8080/api/test/all
+          curl -s http://127.0.0.1:8080/api/test/all | jq . || curl -s http://127.0.0.1:8080/api/test/all
           echo ""
           echo "Testing registration:"
-          curl -s -X POST http://localhost:8080/api/auth/signup \
+          curl -s -X POST http://127.0.0.1:8080/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"debuguser","email":"debug@example.com","password":"password123"}' | jq . || \
-          curl -s -X POST http://localhost:8080/api/auth/signup \
+          curl -s -X POST http://127.0.0.1:8080/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"debuguser","email":"debug@example.com","password":"password123"}'
 
@@ -242,8 +242,8 @@ jobs:
         if: always()
         run: |
           echo "ℹ️ Test environment on port 8080 will remain running"
-          echo "Access it at: http://localhost:8080"
-          echo "Health check: http://localhost:8080/health"
+          echo "Access it at: http://127.0.0.1:8080"
+          echo "Health check: http://127.0.0.1:8080/health"
 
   # Этап 4: Деплой в production
   deploy-production:
