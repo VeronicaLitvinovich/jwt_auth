@@ -11,6 +11,12 @@ curl -X POST -H "Content-Type: application/json" -d '{
   "password": "123456"
 }' "http://localhost:8080/api/auth/signup"
 
+curl -X POST -H "Content-Type: application/json" -d '{
+  "username": "testuser",
+  "email": "test@example.com",
+  "password": "123456"
+}' "http://localhost:3000/api/auth/signup"
+
 echo -e "\n\n2. Testing admin registration..."
 curl -X POST -H "Content-Type: application/json" -d '{
   "username": "testadmin",

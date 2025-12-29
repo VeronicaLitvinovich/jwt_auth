@@ -25,6 +25,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Stop services on ports 3000 and 8080
+        run: |
+          echo "🛑 Stopping services on ports 3000 and 8080..."
+          # Остановка процессов на порту 3000
+          lsof -ti:3000 | xargs kill -9 2>/dev/null || echo "No process on port 3000"
+          # Остановка процессов на порту 8080
+          lsof -ti:8080 | xargs kill -9 2>/dev/null || echo "No process on port 8080"
+          # Остановка всех Docker Compose контейнеров
+          docker-compose down -v --remove-orphans 2>/dev/null || true
+          docker-compose -f docker-compose.prod.yml down -v --remove-orphans 2>/dev/null || true
+          echo "✅ Ports cleaned"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
