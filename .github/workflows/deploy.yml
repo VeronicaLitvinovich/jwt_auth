@@ -244,7 +244,7 @@ jobs:
     runs-on: self-hosted
     needs: deploy-test-environment
     if: success()
-    name: 🔗 Integration Tests
+    name: Integration Tests
     environment: test
     steps:
       - name: Checkout code
