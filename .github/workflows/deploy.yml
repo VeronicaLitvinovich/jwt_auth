@@ -72,96 +72,49 @@ jobs:
           docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
           echo "✅ All services stopped"
 
-  # Этап 2: Запуск тестового окружения с Docker Compose
+  # Этап 2: Запуск тестового окружения БЕЗ Docker (из-за нестабильности Docker Desktop)
   deploy-test-environment:
     runs-on: self-hosted
     needs: unit-tests
-    if: success() # Запускается только если unit-tests прошли успешно
-    name: 🐳 Deploy Test Environment
+    if: success()
+    name: 🚀 Deploy Test Environment (No Docker)
     environment: test
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Start Docker if not running
-        run: |
-          if ! docker info > /dev/null 2>&1; then
-            echo "🐳 Starting Docker..."
-            open -a Docker
-            # Ждем пока Docker запустится
-            MAX_ATTEMPTS=30
-            ATTEMPT=1
-            until docker info > /dev/null 2>&1; do
-              if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
-                echo "❌ Docker failed to start"
-                exit 1
-              fi
-              echo "Waiting for Docker... ($ATTEMPT/$MAX_ATTEMPTS)"
-              ATTEMPT=$((ATTEMPT + 1))
-              sleep 2
-            done
-            echo "✅ Docker is running"
-          else
-            echo "✅ Docker is already running"
-          fi
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
 
-      - name: Setup Docker Compose
-        run: |
-          docker-compose version
-          echo "✅ Docker Compose available"
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Stop any existing containers
+      - name: Start test application with PM2
         run: |
-          docker-compose down -v --remove-orphans || true
-          echo "✅ Cleaned previous containers"
+          echo "🚀 Starting test environment on port 8080..."
+          pm2 delete test-env 2>/dev/null || true
+          PORT=8080 NODE_ENV=test DB_DIALECT=sqlite pm2 start server.js --name "test-env"
+          sleep 5
+          echo "✅ Test environment started"
 
-      - name: Build and start services with Docker Compose
+      - name: Verify application is ready
         run: |
-          docker-compose up -d --build
-          echo "✅ Services started with Docker Compose"
-
-      - name: Wait for services to be ready
-        run: |
-          echo "⏳ Waiting for PostgreSQL and App to be ready..."
-          MAX_ATTEMPTS=30
+          echo "⏳ Waiting for application on port 8080..."
+          MAX_ATTEMPTS=15
           ATTEMPT=1
-          SUCCESS=false
-
-          # Ждем PostgreSQL
-          echo "🔍 Waiting for PostgreSQL..."
-          until docker-compose exec -T db pg_isready -U test_admin > /dev/null 2>&1; do
+          until curl -s -f http://localhost:8080/health > /dev/null; do
             if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
-              echo "❌ PostgreSQL failed to start within $((MAX_ATTEMPTS * 2)) seconds"
-              docker-compose logs db
+              echo "❌ Application failed to start"
+              pm2 logs test-env --lines 50
               exit 1
             fi
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - PostgreSQL not ready..."
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS..."
             ATTEMPT=$((ATTEMPT + 1))
             sleep 2
           done
-          echo "✅ PostgreSQL is ready"
-
-          # Ждем приложение
-          ATTEMPT=1
-          echo "🔍 Waiting for Application..."
-          until curl -s -f http://localhost:8080/health > /dev/null; do
-            if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
-              echo "❌ Application failed to start within $((MAX_ATTEMPTS * 3)) seconds"
-              docker-compose logs app
-              exit 1
-            fi
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Application not ready..."
-            
-            # Показываем логи на определенных попытках
-            if [ $ATTEMPT -eq 10 ]; then
-              echo "📋 Recent application logs:"
-              docker-compose logs app --tail=20
-            fi
-            
-            ATTEMPT=$((ATTEMPT + 1))
-            sleep 3
-          done
-          echo "✅ Application is ready and healthy"
+          echo "✅ Test environment is ready on port 8080"
 
       - name: Verify application status
         run: |
