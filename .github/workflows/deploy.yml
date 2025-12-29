@@ -28,6 +28,8 @@ jobs:
       - name: Stop all services before tests
         run: |
           echo "🛑 Stopping all services..."
+          # Остановка PM2 процессов если есть
+          pm2 delete all 2>/dev/null || echo "No PM2 processes"
           # Остановка процессов на всех портах
           lsof -ti:3000 | xargs kill -9 2>/dev/null || echo "No process on port 3000"
           lsof -ti:8080 | xargs kill -9 2>/dev/null || echo "No process on port 8080"
@@ -63,6 +65,7 @@ jobs:
         if: failure()
         run: |
           echo "❌ Unit tests failed - ensuring clean state..."
+          pm2 delete all 2>/dev/null || echo "No PM2 processes"
           lsof -ti:3000 | xargs kill -9 2>/dev/null || echo "No process on port 3000"
           lsof -ti:8081 | xargs kill -9 2>/dev/null || echo "No process on port 8081"
           docker-compose down 2>/dev/null || true
