@@ -23,7 +23,7 @@ describe('Auth JWT Middleware', () => {
     mockNext = jest.fn();
     
     jest.clearAllMocks();
-  });fgghhj
+  });
 
   describe('verifyToken', () => {
     it('should call next for valid token', () => {
