@@ -250,106 +250,60 @@ jobs:
     runs-on: self-hosted
     needs: integration-tests
     environment: production
-    name: 🚀 Deploy to Production
+    name: 🚀 Deploy to Production (No Docker)
     # Запускается только если все интеграционные тесты прошли успешно и это main ветка
     if: success() && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Ensure Docker is running
-        run: |
-          if ! docker info > /dev/null 2>&1; then
-            echo "❌ Docker is not running!"
-            echo "Please start Docker Desktop manually before deploying to production."
-            exit 1
-          fi
-          echo "✅ Docker is running"
-          docker info | grep -E 'Server Version|Operating System'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
 
-      - name: Setup Docker Compose
-        run: |
-          docker-compose version
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Stop existing production containers
+      - name: Start production application with PM2
         run: |
-          docker-compose -f docker-compose.prod.yml down || true
-          echo "✅ Stopped existing production"
-
-      - name: Build production images
-        run: |
-          docker-compose -f docker-compose.prod.yml build --no-cache
-          echo "✅ Production images built"
-
-      - name: Deploy to production
-        run: |
-          docker-compose -f docker-compose.prod.yml up -d
-          echo "🚀 Production deployment started"
-
-      - name: Wait for production database
-        run: |
-          echo "⏳ Waiting for production database..."
-          MAX_ATTEMPTS=30
-          ATTEMPT=1
-
-          until docker-compose -f docker-compose.prod.yml exec -T db pg_isready -U test_admin > /dev/null 2>&1; do
-            if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
-              echo "❌ Production database failed to start"
-              docker-compose -f docker-compose.prod.yml logs db
-              exit 1
-            fi
-            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Database not ready..."
-            ATTEMPT=$((ATTEMPT + 1))
-            sleep 3
-          done
-          echo "✅ Production database is ready"
-
-      - name: Check production database roles
-        run: |
-          echo "🔍 Checking production database roles..."
-          docker-compose -f docker-compose.prod.yml exec -T db psql -U test_admin -d test_lab4_1 -c "SELECT * FROM roles;" || echo "Cannot check roles table"
+          echo "🚀 Starting production environment on port 3000..."
+          pm2 delete production-env 2>/dev/null || true
+          PORT=3000 NODE_ENV=production DB_DIALECT=sqlite pm2 start server.js --name "production-env"
+          sleep 5
+          echo "✅ Production started"
 
       - name: Wait for production application
         run: |
           echo "⏳ Waiting for production application..."
-          MAX_ATTEMPTS=30
+          MAX_ATTEMPTS=15
           ATTEMPT=1
 
-          until curl -s -f http://localhost:3000/health > /dev/null; do
+          until curl -s -f http://127.0.0.1:3000/health > /dev/null; do
             if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
               echo "❌ Production application failed to start"
-              docker-compose -f docker-compose.prod.yml logs app
+              pm2 logs production-env --lines 50
               exit 1
             fi
             echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Application not ready..."
             ATTEMPT=$((ATTEMPT + 1))
-            sleep 5
+            sleep 2
           done
           echo "✅ Production application is healthy"
 
       - name: Verify production deployment
         run: |
           echo "🔍 Verifying production deployment..."
-
-          # Проверяем health endpoint
-          curl -f http://localhost:3000/health
+          curl -f http://127.0.0.1:3000/health
           echo "✅ Health check passed"
-
-          # Проверяем что база данных подключена
-          DB_STATUS=$(curl -s http://localhost:3000/health | grep -o '"status":"[^"]*"')
+          DB_STATUS=$(curl -s http://127.0.0.1:3000/health | grep -o '"status":"[^"]*"')
           echo "📊 Database status: $DB_STATUS"
-
-          # Проверяем роли в базе данных
-          echo "🔍 Checking database roles..."
-          docker-compose -f docker-compose.prod.yml exec -T db psql -U test_admin -d test_lab4_1 -c "SELECT id, name FROM roles;" || echo "Cannot check roles"
 
       - name: Test production functionality
         run: |
           echo "🧪 Testing production functionality..."
-
-          # Тестируем регистрацию
           echo "🔍 Testing user registration..."
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:3000/api/auth/signup \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:3000/api/auth/signup \
             -H "Content-Type: application/json" \
             -d '{"username":"productionuser","email":"production@example.com","password":"password123"}')
 
@@ -368,8 +322,8 @@ jobs:
       - name: Log deployment info
         run: |
           echo "🎉 PRODUCTION DEPLOYMENT SUCCESSFUL"
-          echo "📍 URL: http://localhost:3000"
-          echo "🏥 Health: http://localhost:3000/health"
+          echo "📍 URL: http://127.0.0.1:3000"
+          echo "🏥 Health: http://127.0.0.1:3000/health"
           echo "📊 Environment: production"
           echo "🔧 Node: $(node --version)"
           echo "🕒 Deployed at: $(date)"
