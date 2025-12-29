@@ -158,7 +158,7 @@ describe('Auth Controller', () => {
             maxAge: 24 * 60 * 60 * 1000
           });
           done();
-        } catch (error) {апрол
+        } catch (error) {
           done(error);
         }
       }, 0);
@@ -340,4 +340,4 @@ describe('Auth Controller', () => {
       }, 0);
     });
   });
-});
+});gfvgjhknm
