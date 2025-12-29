@@ -59,15 +59,13 @@ jobs:
           name: unit-test-coverage
           path: coverage/
 
-      - name: Cleanup on failure
+      - name: Stop production on failure
         if: failure()
         run: |
-          echo "🧹 Unit tests failed - ensuring all services are stopped..."
+          echo "❌ Unit tests failed - stopping production on port 3000..."
           lsof -ti:3000 | xargs kill -9 2>/dev/null || echo "No process on port 3000"
-          lsof -ti:8080 | xargs kill -9 2>/dev/null || echo "No process on port 8080"
-          docker-compose down -v --remove-orphans 2>/dev/null || true
-          docker-compose -f docker-compose.prod.yml down -v --remove-orphans 2>/dev/null || true
-          echo "✅ All services stopped - ports 3000 and 8080 are free"
+          docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
+          echo "✅ Production stopped"
 
   # Этап 2: Запуск тестового окружения с Docker Compose
   deploy-test-environment:
