@@ -144,7 +144,7 @@ jobs:
           # Ждем приложение
           ATTEMPT=1
           echo "🔍 Waiting for Application..."
-          until curl -s -f http://localhost:8081/health > /dev/null; do
+          until curl -s -f http://localhost:8080/health > /dev/null; do
             if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
               echo "❌ Application failed to start within $((MAX_ATTEMPTS * 3)) seconds"
               docker-compose logs app
@@ -166,9 +166,9 @@ jobs:
       - name: Verify application status
         run: |
           echo "🔍 Verifying application status..."
-          curl -f http://localhost:8081/health
+          curl -f http://localhost:8080/health
           echo "✅ Health check passed"
-          curl -f http://localhost:8081/
+          curl -f http://localhost:8080/
           echo "✅ Root endpoint working"
           echo "🎉 Test environment is ready for integration tests"
 
