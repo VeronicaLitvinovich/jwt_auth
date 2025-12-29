@@ -9,7 +9,7 @@ curl -X POST -H "Content-Type: application/json" -d '{
   "username": "testuser",
   "email": "test@example.com",
   "password": "123456"
-}' "$BASE_URL/api/auth/signup"
+}' "http://localhost:8080/api/auth/signup"
 
 echo -e "\n\n2. Testing admin registration..."
 curl -X POST -H "Content-Type: application/json" -d '{
@@ -17,13 +17,13 @@ curl -X POST -H "Content-Type: application/json" -d '{
   "email": "admin@example.com",
   "password": "123456",
   "roles": ["admin"]
-}' "$BASE_URL/api/auth/signup"
+}' "http://localhost:8080/api/auth/signup"
 
 echo -e "\n\n3. Testing user login (should get session cookie + JWT tokens)..."
 RESPONSE=$(curl -c cookies.txt -X POST -H "Content-Type: application/json" -d '{
   "username": "testuser",
   "password": "123456"
-}' "$BASE_URL/api/auth/signin")
+}' "http://localhost:3000/api/auth/signin")
 
 echo "$RESPONSE"
 
@@ -37,13 +37,13 @@ echo -e "\n4. Testing session check..."
 curl -b cookies.txt "$BASE_URL/api/auth/session"
 
 echo -e "\n\n5. Testing public route..."
-curl "$BASE_URL/api/test/all"
+curl "http://localhost:8080/api/test/all"
 
 echo -e "\n\n6. Testing user route with SESSION (cookies)..."
-curl -b cookies.txt "$BASE_URL/api/test/user"
+curl -b cookies.txt "http://localhost:8080/api/test/user"
 
 echo -e "\n\n7. Testing user route with JWT token..."
-curl -H "x-access-token: $ACCESS_TOKEN" "$BASE_URL/api/test/user-token"
+curl -H "x-access-token: $ACCESS_TOKEN" "http://localhost:8080/api/test/user-token"
 
 echo -e "\n\n8. Testing user route with HYBRID (should work with both)..."
 curl -b cookies.txt -H "x-access-token: $ACCESS_TOKEN" "$BASE_URL/api/test/user"
@@ -113,7 +113,7 @@ echo -e "\n\n11. Testing admin login..."
 ADMIN_RESPONSE=$(curl -c admin_cookies.txt -X POST -H "Content-Type: application/json" -d '{
   "username": "testadmin",
   "password": "123456"
-}' "$BASE_URL/api/auth/signin")
+}' "http://localhost:8080/api/auth/signin")
 
 echo "$ADMIN_RESPONSE"
 
