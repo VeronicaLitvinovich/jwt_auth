@@ -158,7 +158,7 @@ describe('Auth Controller', () => {
             maxAge: 24 * 60 * 60 * 1000
           });
           done();
-        } catch (error) {
+        } catch (error) {апрол
           done(error);
         }
       }, 0);

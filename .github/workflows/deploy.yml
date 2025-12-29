@@ -24,6 +24,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Save current state before unit tests
+        id: backup_unit
+        run: |
+          echo "💾 Saving current commit for unit tests..."
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "current_commit=$CURRENT_COMMIT" >> $GITHUB_OUTPUT
+          echo "Unit tests starting for commit: $CURRENT_COMMIT"
+
       - name: Stop all services before tests
         run: |
           echo "🛑 Stopping all services..."
@@ -47,12 +55,40 @@ jobs:
         run: npm ci
 
       - name: Run unit tests with coverage
+        id: run_unit_tests
+        continue-on-error: true
         run: |
           # Используйте in-memory базу для unit-тестов
           NODE_ENV=test DB_DIALECT=sqlite npm run test:unit
         env:
           NODE_ENV: test
           DB_DIALECT: sqlite
+
+      - name: Rollback on unit test failure
+        if: steps.run_unit_tests.outcome == 'failure'
+        run: |
+          echo "🚨 Unit tests failed - attempting to restore previous state"
+          echo "⚠️ Failed at commit: ${{ steps.backup_unit.outputs.current_commit }}"
+
+          # Получаем предыдущий успешный коммит
+          PREVIOUS_COMMIT=$(cat /tmp/last_successful_unit_test.txt 2>/dev/null || echo "HEAD~1")
+          echo "🔄 Would rollback to: $PREVIOUS_COMMIT"
+          echo "📝 Note: In real scenario, this would prevent merge to main"
+
+          # Очистка
+          pm2 delete all 2>/dev/null || echo "No PM2 processes"
+          lsof -ti:3000 | xargs kill -9 2>/dev/null || echo "No process on port 3000"
+          lsof -ti:8080 | xargs kill -9 2>/dev/null || echo "No process on port 8080"
+
+          exit 1  # Останавливаем pipeline
+
+      - name: Mark unit tests as successful
+        if: steps.run_unit_tests.outcome == 'success'
+        run: |
+          echo "✅ Unit tests passed - updating marker"
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "$CURRENT_COMMIT" > /tmp/last_successful_unit_test.txt
+          echo "Successful unit test: $CURRENT_COMMIT"
 
       - name: Upload unit test coverage
         uses: actions/upload-artifact@v4
@@ -81,6 +117,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Save test environment state
+        id: backup_test_env
+        run: |
+          echo "💾 Saving state before test environment deployment..."
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "current_commit=$CURRENT_COMMIT" >> $GITHUB_OUTPUT
+          # Сохраняем текущее состояние PM2 если есть
+          pm2 save --force 2>/dev/null || echo "No PM2 state"
+          echo "Test environment deployment starting: $CURRENT_COMMIT"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -90,6 +136,8 @@ jobs:
         run: npm ci
 
       - name: Start test application with PM2
+        id: start_test_app
+        continue-on-error: true
         run: |
           echo "🚀 Starting test environment on port 8080..."
           pm2 delete test-env 2>/dev/null || true
@@ -98,6 +146,8 @@ jobs:
           echo "✅ Test environment started"
 
       - name: Verify application is ready
+        id: verify_test_app
+        continue-on-error: true
         run: |
           echo "⏳ Waiting for application on port 8080..."
           MAX_ATTEMPTS=15
@@ -115,6 +165,8 @@ jobs:
           echo "✅ Test environment is ready on port 8080"
 
       - name: Verify application status
+        id: verify_test_status
+        continue-on-error: true
         run: |
           echo "🔍 Verifying application status..."
           curl -f http://127.0.0.1:8080/health
@@ -122,6 +174,71 @@ jobs:
           curl -f http://127.0.0.1:8080/
           echo "✅ Root endpoint working"
           echo "🎉 Test environment is ready for integration tests"
+
+      - name: Rollback test environment on failure
+        if: |
+          failure() && 
+          (steps.start_test_app.outcome == 'failure' || 
+           steps.verify_test_app.outcome == 'failure' || 
+           steps.verify_test_status.outcome == 'failure')
+        run: |
+          echo "🚨 Test environment deployment failed - initiating rollback!"
+          echo "⚠️ Failed step: start=${{ steps.start_test_app.outcome }}, verify=${{ steps.verify_test_app.outcome }}, status=${{ steps.verify_test_status.outcome }}"
+
+          # Остановка проблемного деплоя
+          echo "🛑 Stopping failed test deployment..."
+          pm2 delete test-env 2>/dev/null || true
+          lsof -ti:8080 | xargs kill -9 2>/dev/null || echo "No process on port 8080"
+
+          # Получаем предыдущую версию
+          PREVIOUS_COMMIT=$(cat /tmp/last_successful_test_deploy.txt 2>/dev/null || echo "HEAD~1")
+          echo "🔄 Rolling back test environment to: $PREVIOUS_COMMIT"
+
+          # Откат кода
+          git fetch --all
+          git checkout $PREVIOUS_COMMIT
+
+          # Переустановка зависимостей
+          echo "📦 Reinstalling dependencies..."
+          npm ci
+
+          # Запуск предыдущей версии
+          echo "🚀 Starting previous test environment version..."
+          PORT=8080 NODE_ENV=test DB_DIALECT=sqlite pm2 start server.js --name "test-env"
+          sleep 8
+
+          # Проверка отката
+          echo "🔍 Verifying test environment rollback..."
+          MAX_ATTEMPTS=10
+          ATTEMPT=1
+
+          until curl -s -f http://127.0.0.1:8080/health > /dev/null; do
+            if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
+              echo "❌ TEST ENVIRONMENT ROLLBACK FAILED!"
+              pm2 logs test-env --lines 100
+              exit 1
+            fi
+            echo "Rollback verification $ATTEMPT/$MAX_ATTEMPTS..."
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 3
+          done
+
+          echo "✅ TEST ENVIRONMENT ROLLBACK SUCCESSFUL"
+          echo "📍 Running at: http://127.0.0.1:8080"
+          echo "📝 Rolled back to: $PREVIOUS_COMMIT"
+
+          exit 1  # Помечаем деплой как неуспешный
+
+      - name: Update test environment success marker
+        if: |
+          steps.start_test_app.outcome == 'success' && 
+          steps.verify_test_app.outcome == 'success' && 
+          steps.verify_test_status.outcome == 'success'
+        run: |
+          echo "✅ Test environment deployed successfully"
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "$CURRENT_COMMIT" > /tmp/last_successful_test_deploy.txt
+          echo "Successful test deploy: $CURRENT_COMMIT"
 
   integration-tests:
     runs-on: self-hosted
@@ -160,12 +277,41 @@ jobs:
           fi
 
       - name: Run integration tests against Docker environment
+        id: run_integration_tests
+        continue-on-error: true
         env:
           NODE_ENV: test
           TEST_BASE_URL: http://127.0.0.1:8080
         run: |
           echo "Using TEST_BASE_URL=$TEST_BASE_URL"
           npm run test:integration
+
+      - name: Rollback on integration test failure
+        if: steps.run_integration_tests.outcome == 'failure'
+        run: |
+          echo "🚨 Integration tests failed!"
+          echo "⚠️ This indicates test environment issues"
+
+          # Логирование для анализа
+          echo "📊 Getting application logs..."
+          pm2 logs test-env --lines 100 --nostream || true
+
+          echo "🔍 Checking application health..."
+          curl -s http://127.0.0.1:8080/health || echo "Health check failed"
+
+          PREVIOUS_COMMIT=$(cat /tmp/last_successful_integration_test.txt 2>/dev/null || echo "HEAD~1")
+          echo "💡 Last successful integration test was at: $PREVIOUS_COMMIT"
+          echo "📝 Current commit failed integration tests - pipeline stopped"
+
+          exit 1  # Останавливаем pipeline
+
+      - name: Mark integration tests as successful
+        if: steps.run_integration_tests.outcome == 'success'
+        run: |
+          echo "✅ Integration tests passed"
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "$CURRENT_COMMIT" > /tmp/last_successful_integration_test.txt
+          echo "Successful integration test: $CURRENT_COMMIT"
 
       - name: Test API endpoints manually
         run: |
