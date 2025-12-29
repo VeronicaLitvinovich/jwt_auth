@@ -17,10 +17,9 @@ env:
   NODE_ENV: test
 
 jobs:
-  # Этап 1: Юнит-тесты
   unit-tests:
     runs-on: self-hosted
-    name: 🧪 Unit Tests
+    name: Unit Tests
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -72,12 +71,11 @@ jobs:
           docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
           echo "✅ All services stopped"
 
-  # Этап 2: Запуск тестового окружения БЕЗ Docker (из-за нестабильности Docker Desktop)
   deploy-test-environment:
     runs-on: self-hosted
     needs: unit-tests
     if: success()
-    name: 🚀 Deploy Test Environment (No Docker)
+    name: Deploy Test Environment (No Docker)
     environment: test
     steps:
       - name: Checkout code
@@ -125,7 +123,6 @@ jobs:
           echo "✅ Root endpoint working"
           echo "🎉 Test environment is ready for integration tests"
 
-  # Этап 3: Интеграционные тесты
   integration-tests:
     runs-on: self-hosted
     needs: deploy-test-environment
@@ -245,13 +242,11 @@ jobs:
           echo "Access it at: http://127.0.0.1:8080"
           echo "Health check: http://127.0.0.1:8080/health"
 
-  # Этап 4: Деплой в production
   deploy-production:
     runs-on: self-hosted
     needs: integration-tests
     environment: production
     name: 🚀 Deploy to Production (No Docker)
-    # Запускается только если все интеграционные тесты прошли успешно и это main ветка
     if: success() && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
@@ -265,7 +260,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Save current deployment state (backup)
+        id: backup
+        run: |
+          echo "💾 Saving current deployment state..."
+          # Сохраняем текущий коммит
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "current_commit=$CURRENT_COMMIT" >> $GITHUB_OUTPUT
+          
+          # Сохраняем состояние PM2
+          pm2 save --force 2>/dev/null || echo "No PM2 state to save"
+          
+          # Сохраняем информацию о предыдущем деплое
+          echo "$CURRENT_COMMIT" > /tmp/last_successful_deploy.txt
+          echo "✅ Backup created: commit $CURRENT_COMMIT"
+
       - name: Start production application with PM2
+        id: deploy
         run: |
           echo "🚀 Starting production environment on port 3000..."
           pm2 delete production-env 2>/dev/null || true
@@ -274,6 +285,8 @@ jobs:
           echo "✅ Production started"
 
       - name: Wait for production application
+        id: health_check
+        continue-on-error: true
         run: |
           echo "⏳ Waiting for production application..."
           MAX_ATTEMPTS=15
@@ -292,14 +305,32 @@ jobs:
           echo "✅ Production application is healthy"
 
       - name: Verify production deployment
+        id: verify_deployment
+        continue-on-error: true
         run: |
           echo "🔍 Verifying production deployment..."
-          curl -f http://127.0.0.1:3000/health
+          
+          # Проверка health endpoint
+          if ! curl -f http://127.0.0.1:3000/health; then
+            echo "❌ Health check failed"
+            exit 1
+          fi
           echo "✅ Health check passed"
+          
+          # Проверка статуса БД
           DB_STATUS=$(curl -s http://127.0.0.1:3000/health | grep -o '"status":"[^"]*"')
           echo "📊 Database status: $DB_STATUS"
+          
+          # Проверка основных эндпоинтов
+          if ! curl -f http://127.0.0.1:3000/api/test/all > /dev/null 2>&1; then
+            echo "❌ Public API endpoint check failed"
+            exit 1
+          fi
+          echo "✅ Public API endpoint works"
 
       - name: Test production functionality
+        id: functional_tests
+        continue-on-error: true
         run: |
           echo "🧪 Testing production functionality..."
           echo "🔍 Testing user registration..."
@@ -313,11 +344,77 @@ jobs:
           echo "Registration response code: $HTTP_CODE"
           echo "Registration response body: $BODY"
 
-          if [ "$HTTP_CODE" -eq 200 ]; then
-            echo "✅ Production registration test passed"
+          if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 400 ]; then
+            echo "✅ Production registration test passed (user may exist)"
           else
-            echo "⚠️ Production registration returned $HTTP_CODE"
+            echo "❌ Production registration test failed with code $HTTP_CODE"
+            exit 1
           fi
+
+      - name: Automatic Rollback on Critical Failure
+        if: |
+          failure() && 
+          (steps.health_check.outcome == 'failure' || 
+           steps.verify_deployment.outcome == 'failure' || 
+           steps.functional_tests.outcome == 'failure')
+        run: |
+          echo "🚨 CRITICAL FAILURE DETECTED - Initiating automatic rollback!"
+          echo "⚠️ Failed step: health_check=${{ steps.health_check.outcome }}, verify=${{ steps.verify_deployment.outcome }}, functional=${{ steps.functional_tests.outcome }}"
+          
+          # Остановка текущего (проблемного) деплоя
+          echo "🛑 Stopping failed deployment..."
+          pm2 delete production-env 2>/dev/null || true
+          
+          # Получаем предыдущий успешный коммит
+          PREVIOUS_COMMIT=$(cat /tmp/last_successful_deploy.txt 2>/dev/null || echo "HEAD~1")
+          echo "🔄 Rolling back to previous commit: $PREVIOUS_COMMIT"
+          
+          # Откатываем код
+          git fetch --all
+          git checkout $PREVIOUS_COMMIT
+          
+          # Переустанавливаем зависимости (на случай если они изменились)
+          echo "📦 Reinstalling dependencies from previous version..."
+          npm ci
+          
+          # Запускаем предыдущую версию
+          echo "🚀 Starting previous version..."
+          PORT=3000 NODE_ENV=production DB_DIALECT=sqlite pm2 start server.js --name "production-env"
+          sleep 8
+          
+          # Проверяем что откат прошел успешно
+          echo "🔍 Verifying rollback..."
+          MAX_ATTEMPTS=10
+          ATTEMPT=1
+          
+          until curl -s -f http://127.0.0.1:3000/health > /dev/null; do
+            if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
+              echo "❌ ROLLBACK FAILED - Manual intervention required!"
+              pm2 logs production-env --lines 100
+              exit 1
+            fi
+            echo "Rollback verification attempt $ATTEMPT/$MAX_ATTEMPTS..."
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 3
+          done
+          
+          echo "✅ ROLLBACK SUCCESSFUL - Previous version restored"
+          echo "📍 Application running at: http://127.0.0.1:3000"
+          echo "🏥 Health check: http://127.0.0.1:3000/health"
+          echo "📝 Rolled back to commit: $PREVIOUS_COMMIT"
+          
+          # Уведомление об откате
+          curl -f http://127.0.0.1:3000/health
+          
+          exit 1  # Помечаем деплой как неуспешный, но приложение работает
+
+      - name: Update successful deployment marker
+        if: success()
+        run: |
+          echo "✅ Deployment successful - updating marker"
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "$CURRENT_COMMIT" > /tmp/last_successful_deploy.txt
+          echo "Successful deployment: $CURRENT_COMMIT"
 
       - name: Log deployment info
         run: |
@@ -329,7 +426,6 @@ jobs:
           echo "🕒 Deployed at: $(date)"
           echo "📝 Commit: ${{ github.sha }}"
 
-  # Этап 5: Откат
   rollback:
     runs-on: self-hosted
     name: 🔄 Rollback Deployment

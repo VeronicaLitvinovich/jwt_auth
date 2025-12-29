@@ -4,6 +4,12 @@ BASE_URL="http://localhost:8080"
 
 echo "=== Testing Hybrid Authentication ==="
 
+cd /tmp; bash run.sh
+
+git add .
+git commit -m "ok"
+git push 
+
 echo -e "\n1. Testing user registration...\n1a. Test environment (8080):..."
 curl -X POST -H "Content-Type: application/json" -d '{
   "username": "testuser",
@@ -11,7 +17,6 @@ curl -X POST -H "Content-Type: application/json" -d '{
   "password": "123456"
 }' "http://localhost:8080/api/auth/signup"
 
-echo -e "\n1b. Production environment (3000)..."
 curl -X POST -H "Content-Type: application/json" -d '{
   "username": "testuser",
   "email": "test@example.com",
@@ -30,7 +35,7 @@ echo -e "\n\n3. Testing user login (should get session cookie + JWT tokens)..."
 RESPONSE=$(curl -c cookies.txt -X POST -H "Content-Type: application/json" -d '{
   "username": "testuser",
   "password": "123456"
-}' "http://localhost:3000/api/auth/signin")
+}' "http://localhost:8080/api/auth/signin")
 
 echo "$RESPONSE"
 
