@@ -111,7 +111,7 @@ jobs:
     runs-on: self-hosted
     needs: unit-tests
     if: success()
-    name: Deploy Test Environment (No Docker)
+    name: Deploy Test Environment
     environment: test
     steps:
       - name: Checkout code
@@ -392,7 +392,7 @@ jobs:
     runs-on: self-hosted
     needs: integration-tests
     environment: production
-    name: Deploy to Production (No Docker)
+    name: Deploy to Production
     if: success() && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
