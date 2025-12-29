@@ -297,27 +297,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Start Docker if not running
+      - name: Ensure Docker is running
         run: |
           if ! docker info > /dev/null 2>&1; then
-            echo "🐳 Starting Docker..."
-            open -a Docker
-            # Ждем пока Docker запустится
-            MAX_ATTEMPTS=30
-            ATTEMPT=1
-            until docker info > /dev/null 2>&1; do
-              if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
-                echo "❌ Docker failed to start"
-                exit 1
-              fi
-              echo "Waiting for Docker... ($ATTEMPT/$MAX_ATTEMPTS)"
-              ATTEMPT=$((ATTEMPT + 1))
-              sleep 2
-            done
-            echo "✅ Docker is running"
-          else
-            echo "✅ Docker is already running"
+            echo "❌ Docker is not running!"
+            echo "Please start Docker Desktop manually before deploying to production."
+            exit 1
           fi
+          echo "✅ Docker is running"
+          docker info | grep -E 'Server Version|Operating System'
 
       - name: Setup Docker Compose
         run: |
