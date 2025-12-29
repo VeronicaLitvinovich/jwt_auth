@@ -35,7 +35,7 @@ jobs:
           # Остановка всех Docker Compose контейнеров
           docker-compose down -v --remove-orphans 2>/dev/null || true
           docker-compose -f docker-compose.prod.yml down -v --remove-orphans 2>/dev/null || true
-          echo "✅ Ports cleaned"
+          echo "✅ All services stopped - ports cleaned"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
