@@ -5,7 +5,7 @@ const Role = db.role;
 
 const Op = db.Sequelize.Op;
 
-let jwt = require("jsonwebtdfghjoken");
+let jwt = require("jsonwebtoken");
 let bcrypt = require("bcryptjs");
 const { v4: uuidv4 } = require("uuid");
 
